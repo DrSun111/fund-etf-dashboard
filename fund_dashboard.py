@@ -56,6 +56,24 @@ def load_df_cache(file_path: Path) -> pd.DataFrame:
 # =========================
 CUSTOM_CSS = """
 <style>
+html, body, [data-testid="stAppViewContainer"] {
+    background: #050816 !important;
+    color: #F8FAFC !important;
+}
+
+[data-testid="stHeader"] {
+    background: rgba(5, 8, 22, 0.88) !important;
+}
+
+[data-testid="stSidebar"] {
+    background: #0B1020 !important;
+    color: #F8FAFC !important;
+}
+
+[data-testid="stSidebar"] * {
+    color: #F8FAFC !important;
+}
+
 .block-container {
     padding-top: 1.2rem;
     padding-bottom: 2rem;
@@ -63,66 +81,66 @@ CUSTOM_CSS = """
 
 .main-title {
     font-size: 34px;
-    font-weight: 800;
+    font-weight: 850;
     letter-spacing: 0.5px;
     margin-bottom: 0.2rem;
+    color: #FFFFFF !important;
 }
 
 .sub-title {
     font-size: 15px;
-    color: #8A8F98;
+    color: #D6DEE9 !important;
     margin-bottom: 1.2rem;
+}
+
+.stMarkdown, .stText, p, span, label, div {
+    color: #F8FAFC !important;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #FFFFFF !important;
 }
 
 .signal-card {
     padding: 18px 20px;
     border-radius: 18px;
-    background: linear-gradient(135deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.92));
-    border: 1px solid rgba(148, 163, 184, 0.22);
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
     margin-bottom: 12px;
 }
 
 .signal-title {
     font-size: 17px;
-    font-weight: 700;
-    color: #F8FAFC;
+    font-weight: 750;
+    color: #FFFFFF !important;
     margin-bottom: 8px;
 }
 
 .signal-text {
     font-size: 14px;
     line-height: 1.75;
-    color: #CBD5E1;
+    color: #F8FAFC !important;
 }
 
-.good {
-    color: #22c55e;
-    font-weight: 700;
-}
-
-.warn {
-    color: #f59e0b;
-    font-weight: 700;
-}
-
-.bad {
-    color: #ef4444;
-    font-weight: 700;
-}
-
-.neutral {
-    color: #94a3b8;
-    font-weight: 700;
-}
+.good { color: #22c55e !important; font-weight: 750; }
+.warn { color: #f59e0b !important; font-weight: 750; }
+.bad { color: #ef4444 !important; font-weight: 750; }
+.neutral { color: #CBD5E1 !important; font-weight: 750; }
 
 div[data-testid="stMetricValue"] {
     font-size: 24px;
-    font-weight: 800;
+    font-weight: 850;
+    color: #FFFFFF !important;
 }
 
 div[data-testid="stMetricLabel"] {
     font-size: 14px;
+    color: #E5E7EB !important;
+}
+
+button, input, textarea, select {
+    color: #F8FAFC !important;
 }
 </style>
 """
@@ -130,42 +148,88 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # =========================
-# 默认基金/ETF池
+# 基金/ETF模块池
 # 说明：
-# 1. 已增加资源/周期相关 ETF。
-# 2. 代码可按你实际关注品种继续增删。
+# 1. 覆盖宽基、科技、电气电力、资源周期、金融地产、消费医药、港股海外、商品等模块。
+# 2. 若模块里没有目标基金，可在侧边栏打开“用户自查”，输入任意6位基金/ETF代码。
 # =========================
-DEFAULT_ETFS = {
-    # 宽基/成长
-    "沪深300ETF": "510300",
-    "创业板ETF": "159915",
-    "科创50ETF": "588000",
-
-    # 科技制造
-    "半导体ETF": "512480",
-    "芯片ETF": "159995",
-    "新能源车ETF": "515030",
-    "光伏ETF": "515790",
-    "军工ETF": "512660",
-
-    # 金融医药消费
-    "证券ETF": "512880",
-    "医药ETF": "512010",
-    "消费ETF": "159928",
-
-    # 资源/周期/大宗商品相关
-    "有色金属ETF": "512400",
-    "稀土ETF": "516780",
-    "钢铁ETF": "515210",
-    "煤炭ETF": "515220",
-    "能源ETF": "159930",
-    "化工ETF": "516020",
-    "黄金ETF": "518880",
-
-    # 港股/海外
-    "恒生科技ETF": "513130",
-    "纳指ETF": "513100",
+ETF_MODULES = {
+    "宽基指数": {
+        "沪深300ETF": "510300",
+        "上证50ETF": "510050",
+        "中证500ETF": "510500",
+        "中证1000ETF": "512100",
+        "创业板ETF": "159915",
+        "科创50ETF": "588000",
+        "双创50ETF": "159781",
+        "红利ETF": "510880",
+    },
+    "科技与高端制造": {
+        "半导体ETF": "512480",
+        "芯片ETF": "159995",
+        "人工智能ETF": "515980",
+        "云计算ETF": "516510",
+        "软件ETF": "515230",
+        "通信ETF": "515880",
+        "5GETF": "515050",
+        "机器人ETF": "562500",
+        "智能车ETF": "159888",
+        "军工ETF": "512660",
+    },
+    "电气电力与新能源": {
+        "新能源车ETF": "515030",
+        "光伏ETF": "515790",
+        "电池ETF": "561910",
+        "储能电池ETF": "159566",
+        "绿色电力ETF": "562960",
+        "电力ETF": "561560",
+        "新能源ETF": "516160",
+        "碳中和ETF": "159790",
+        "央企能源ETF": "562850",
+    },
+    "资源周期与大宗商品": {
+        "有色金属ETF": "512400",
+        "稀土ETF": "516780",
+        "钢铁ETF": "515210",
+        "煤炭ETF": "515220",
+        "能源ETF": "159930",
+        "化工ETF": "516020",
+        "石油基金": "162719",
+        "黄金ETF": "518880",
+        "豆粕ETF": "159985",
+    },
+    "金融地产": {
+        "证券ETF": "512880",
+        "银行ETF": "512800",
+        "保险证券ETF": "515630",
+        "地产ETF": "512200",
+        "金融ETF": "510230",
+    },
+    "消费医药农业": {
+        "消费ETF": "159928",
+        "酒ETF": "512690",
+        "食品饮料ETF": "515170",
+        "医药ETF": "512010",
+        "医疗ETF": "512170",
+        "创新药ETF": "159992",
+        "养殖ETF": "159865",
+        "农业ETF": "159825",
+    },
+    "港股与海外": {
+        "恒生科技ETF": "513130",
+        "恒生互联网ETF": "513330",
+        "港股通互联网ETF": "159792",
+        "恒生ETF": "159920",
+        "纳指ETF": "513100",
+        "标普500ETF": "513500",
+        "德国ETF": "513030",
+        "日经ETF": "513520",
+    },
 }
+
+DEFAULT_ETFS = {}
+for _, module_items in ETF_MODULES.items():
+    DEFAULT_ETFS.update(module_items)
 
 
 # =========================
@@ -353,6 +417,16 @@ def get_base_price(symbol: str) -> float:
         "513130": 0.55,
         "513100": 1.6,
     }
+    base_price_map.update({
+        "510050": 2.7, "510500": 5.8, "512100": 2.3, "159781": 0.8, "510880": 3.0,
+        "515980": 0.9, "516510": 0.8, "515230": 0.7, "515880": 1.1, "515050": 1.0,
+        "562500": 1.0, "159888": 1.0, "561910": 0.8, "159566": 1.0, "562960": 1.0,
+        "561560": 1.0, "516160": 0.8, "159790": 0.8, "562850": 1.0,
+        "512800": 1.1, "515630": 0.9, "512200": 0.8, "510230": 1.0,
+        "512690": 0.8, "515170": 0.8, "512170": 0.4, "159992": 0.6,
+        "159865": 0.8, "159825": 0.8, "513330": 0.5, "159792": 0.6,
+        "159920": 1.0, "513500": 1.6, "513030": 1.0, "513520": 1.0,
+    })
     return base_price_map.get(str(symbol), 1.0)
 
 
@@ -417,13 +491,13 @@ def generate_fallback_spot() -> pd.DataFrame:
 # 快速数据获取函数
 # =========================
 @st.cache_data(ttl=30, show_spinner=False)
-def get_etf_spot():
+def get_etf_spot(codes_tuple):
     """
     快速实时行情：
     东方财富一次请求 → 缓存 → 备用展示。
     不做三次重复请求。
     """
-    codes = list(DEFAULT_ETFS.values())
+    codes = list(codes_tuple)
 
     try:
         df = fetch_spot_from_eastmoney(codes)
@@ -431,8 +505,11 @@ def get_etf_spot():
         return df, "东方财富实时行情"
     except Exception as e:
         cached = load_df_cache(SPOT_CACHE_FILE)
-        if not cached.empty:
-            return cached, f"缓存实时行情，东方财富错误：{e}"
+        if not cached.empty and "代码" in cached.columns:
+            cached["代码"] = cached["代码"].astype(str)
+            cached = cached[cached["代码"].isin([str(x) for x in codes])]
+            if not cached.empty:
+                return cached, f"缓存实时行情，东方财富错误：{e}"
 
         return generate_fallback_spot(), f"备用展示数据，东方财富错误：{e}"
 
@@ -769,7 +846,7 @@ def build_market_table(spot_df, watch_codes):
 # =========================
 st.markdown('<div class="main-title">📊 基金 / ETF 专业实时分析看板</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">东方财富直连 · 快速刷新 · 资源/周期ETF扩展 · 趋势结构 · 资金行为代理</div>',
+    '<div class="sub-title">东方财富直连 · 快速刷新 · 分模块基金池 · 用户代码自查 · 趋势结构 · 资金行为代理</div>',
     unsafe_allow_html=True
 )
 
@@ -780,16 +857,34 @@ st.markdown(
 with st.sidebar:
     st.header("🎛️ 看板设置")
 
-    selected_name = st.selectbox(
-        "选择关注基金/ETF",
-        list(DEFAULT_ETFS.keys()),
-        index=list(DEFAULT_ETFS.keys()).index("有色金属ETF") if "有色金属ETF" in DEFAULT_ETFS else 0
+    module_name = st.selectbox(
+        "选择基金模块",
+        list(ETF_MODULES.keys()),
+        index=list(ETF_MODULES.keys()).index("电气电力与新能源")
     )
 
-    selected_code = st.text_input(
-        "基金/ETF代码",
-        value=DEFAULT_ETFS[selected_name]
+    module_etfs = ETF_MODULES[module_name]
+
+    selected_name = st.selectbox(
+        "选择模块内基金/ETF",
+        list(module_etfs.keys()),
+        index=0
     )
+
+    st.divider()
+
+    custom_mode = st.checkbox("用户自查：手动输入基金/ETF代码", value=False)
+
+    if custom_mode:
+        selected_code = st.text_input("输入6位基金/ETF代码", value=module_etfs[selected_name]).strip()
+        selected_display_name = f"自查基金/ETF {selected_code}"
+        watch_codes = list(module_etfs.values())
+        if selected_code and selected_code not in watch_codes:
+            watch_codes = [selected_code] + watch_codes
+    else:
+        selected_code = module_etfs[selected_name]
+        selected_display_name = selected_name
+        watch_codes = list(module_etfs.values())
 
     days = st.slider(
         "历史分析周期",
@@ -817,8 +912,8 @@ with st.sidebar:
         st.rerun()
 
     st.caption(
-        "说明：本版已取消AkShare三次重复请求，优先直连东方财富公开行情接口。"
-        "若接口失败，会读取最近缓存；仍失败则启用备用展示数据。"
+        "说明：本版直接接入东方财富公开行情接口，不再使用 AkShare，不做三次重复请求。"
+        "若真实接口失败，会读取最近缓存；仍失败则启用备用展示数据。"
     )
 
 
@@ -827,7 +922,7 @@ with st.sidebar:
 # =========================
 try:
     with st.spinner("正在快速获取东方财富行情数据..."):
-        spot_df, spot_source = get_etf_spot()
+        spot_df, spot_source = get_etf_spot(tuple(watch_codes))
         spot_norm = normalize_spot_columns(spot_df)
         hist, hist_source = get_etf_history(selected_code, days=days)
 
@@ -852,12 +947,12 @@ try:
 
     if not selected_spot.empty:
         spot_row = selected_spot.iloc[0]
-        real_name = spot_row.get("名称", selected_name)
+        real_name = spot_row.get("名称", selected_display_name)
         latest_price = spot_row.get("最新价", latest["收盘"])
         today_pct = spot_row.get("涨跌幅", latest.get("日涨跌幅", np.nan))
         today_amount = spot_row.get("成交额", latest.get("成交额", np.nan))
     else:
-        real_name = selected_name
+        real_name = selected_display_name
         latest_price = latest["收盘"]
         today_pct = latest.get("日涨跌幅", np.nan)
         today_amount = latest.get("成交额", np.nan)
@@ -879,13 +974,13 @@ try:
     c10.metric("策略提示", summary["action_label"])
 
     st.caption(
-        f"数据状态：实时行情 = {spot_source}；历史行情 = {hist_source}；"
+        f"当前模块：{module_name}；数据状态：实时行情 = {spot_source}；历史行情 = {hist_source}；"
         f"历史数据最后日期 = {latest['日期'].strftime('%Y-%m-%d') if pd.notna(latest['日期']) else '未知'}"
     )
 
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 专业分析图", "🧠 自动解读", "🔥 实时行情池", "📋 信号明细"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 专业分析图", "🧠 自动解读", "🔥 模块行情池", "📋 信号明细", "🧭 全模块速览"])
 
     with tab1:
         fig = draw_professional_chart(
@@ -956,7 +1051,6 @@ try:
             st.dataframe(key_df, use_container_width=True, hide_index=True)
 
     with tab3:
-        watch_codes = list(DEFAULT_ETFS.values())
         market_table = build_market_table(spot_df, watch_codes)
 
         if market_table.empty:
@@ -965,7 +1059,7 @@ try:
             if "涨跌幅" in market_table.columns:
                 market_table = market_table.sort_values("涨跌幅", ascending=False)
 
-            st.subheader("关注ETF实时强弱排名")
+            st.subheader(f"{module_name} 模块实时强弱排名")
             st.dataframe(
                 market_table,
                 use_container_width=True,
@@ -977,7 +1071,7 @@ try:
                 best = market_table.iloc[0]
                 worst = market_table.iloc[-1]
                 st.info(
-                    f"当前关注池中，最强为 **{best.get('名称', '')}**，涨跌幅 {safe_num(best.get('涨跌幅', np.nan)):.2f}%；"
+                    f"当前模块中，最强为 **{best.get('名称', '')}**，涨跌幅 {safe_num(best.get('涨跌幅', np.nan)):.2f}%；"
                     f"最弱为 **{worst.get('名称', '')}**，涨跌幅 {safe_num(worst.get('涨跌幅', np.nan)):.2f}%。"
                 )
 
@@ -1003,6 +1097,21 @@ try:
             height=520,
             hide_index=True
         )
+
+
+    with tab5:
+        st.subheader("全模块基金池")
+        module_rows = []
+        for mod, items in ETF_MODULES.items():
+            for name, code in items.items():
+                module_rows.append({
+                    "模块": mod,
+                    "名称": name,
+                    "代码": code
+                })
+        module_df = pd.DataFrame(module_rows)
+        st.dataframe(module_df, use_container_width=True, height=560, hide_index=True)
+        st.info("如果这里没有你要看的基金，打开左侧“用户自查”，输入6位基金/ETF代码即可。")
 
 except Exception as e:
     st.error("看板运行失败。")
