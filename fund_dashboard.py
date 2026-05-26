@@ -258,7 +258,7 @@ def rerun_app() -> None:
 
 def apply_page_config() -> None:
     st.set_page_config(
-        page_title="FundPilot Pro | 基金智能驾驶舱",
+        page_title="FundPilot Pro | 基金",
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -1479,7 +1479,7 @@ def generate_alerts(pos_df: pd.DataFrame, catalog: pd.DataFrame) -> Dict[str, Li
 def render_sidebar(catalog: pd.DataFrame) -> str:
     with st.sidebar:
         st.markdown(f"### {APP_NAME}")
-        st.caption("基金智能驾驶舱")
+        st.caption("基金")
         query = st.text_input("全局搜索", placeholder="输入基金代码、名称、模块或关键词")
         if query:
             results = search_funds(query, catalog, limit=5)
@@ -1490,7 +1490,7 @@ def render_sidebar(catalog: pd.DataFrame) -> str:
                     st.session_state["nav"] = "基金分析"
                     rerun_app()
         st.divider()
-        nav_options = ["首页驾驶舱", "基金分析", "实仓管理", "模块行情", "自定义搜索", "设置中心"]
+        nav_options = ["首页", "基金分析", "实仓管理", "模块行情", "自定义搜索", "设置中心"]
         nav = st.radio("功能模块", nav_options, key="nav", label_visibility="collapsed")
         st.divider()
         st.caption("数据源")
@@ -2188,7 +2188,7 @@ def main() -> None:
     init_state()
     catalog = build_catalog()
     nav = render_sidebar(catalog)
-    if nav == "首页驾驶舱":
+    if nav == "首页":
         page_dashboard(catalog)
     elif nav == "基金分析":
         page_fund_analysis(catalog)
