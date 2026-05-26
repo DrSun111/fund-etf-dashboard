@@ -517,7 +517,7 @@ def render_hero() -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>{APP_NAME}｜基金智能驾驶舱</h1>
+            <h1>{APP_NAME}｜基金盘</h1>
             <p>{APP_SUBTITLE}</p>
         </div>
         """,
