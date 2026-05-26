@@ -1,5 +1,6 @@
 import time
 import datetime as dt
+from pathlib import Path
 
 import akshare as ak
 import numpy as np
@@ -151,34 +152,112 @@ def format_pct(x):
     return f"{x:.2f}%"
 
 
+# =========================
+# 稳定性增强：重试 + 本地缓存
+# =========================
+CACHE_DIR = Path(".etf_cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+SPOT_CACHE_FILE = CACHE_DIR / "etf_spot_cache.csv"
+
+
+def history_cache_file(symbol: str) -> Path:
+    safe_symbol = str(symbol).replace("/", "_").replace("\\", "_")
+    return CACHE_DIR / f"hist_{safe_symbol}.csv"
+
+
+def save_df_cache(df: pd.DataFrame, file_path: Path):
+    """
+    保存最近一次成功获取的数据。
+    Streamlit Cloud 的磁盘缓存不保证永久存在，但可用于当前运行周期内兜底。
+    """
+    try:
+        if df is not None and not df.empty:
+            df.to_csv(file_path, index=False, encoding="utf-8-sig")
+    except Exception:
+        pass
+
+
+def load_df_cache(file_path: Path) -> pd.DataFrame:
+    try:
+        if file_path.exists():
+            return pd.read_csv(file_path)
+    except Exception:
+        pass
+    return pd.DataFrame()
+
+
+def run_with_retry(fetch_func, retry=3, sleep_seconds=2):
+    """
+    对 AkShare 请求做轻量重试，避免偶发 RemoteDisconnected 直接导致页面红屏。
+    """
+    last_error = None
+    for _ in range(retry):
+        try:
+            df = fetch_func()
+            if df is not None and not df.empty:
+                return df, None
+        except Exception as e:
+            last_error = e
+            time.sleep(sleep_seconds)
+    return pd.DataFrame(), last_error
+
+
 @st.cache_data(ttl=45)
 def get_etf_spot():
     """
     ETF实时行情。
-    缓存45秒，避免高频请求数据源。
+    上午原逻辑基础上增加：失败重试 + 最近一次成功数据缓存兜底。
     """
-    df = ak.fund_etf_spot_em()
-    return df
+    def fetch():
+        return ak.fund_etf_spot_em()
+
+    df, error = run_with_retry(fetch, retry=3, sleep_seconds=2)
+
+    if df is not None and not df.empty:
+        save_df_cache(df, SPOT_CACHE_FILE)
+        return df
+
+    cached = load_df_cache(SPOT_CACHE_FILE)
+    if not cached.empty:
+        st.warning("实时行情接口暂时不稳定，当前使用最近一次成功缓存数据。")
+        return cached
+
+    st.warning(f"实时行情暂时获取失败，请稍后刷新。错误信息：{error}")
+    return pd.DataFrame()
 
 
 @st.cache_data(ttl=180)
 def get_etf_history(symbol: str, days: int = 240):
     """
     ETF历史行情，用于均线、成交额、资金行为代理指标分析。
+    上午原逻辑基础上增加：失败重试 + 最近一次成功历史数据缓存兜底。
     """
     end_date = dt.datetime.now().strftime("%Y%m%d")
     start_date = (dt.datetime.now() - dt.timedelta(days=days * 2)).strftime("%Y%m%d")
+    cache_file = history_cache_file(symbol)
 
-    df = ak.fund_etf_hist_em(
-        symbol=symbol,
-        period="daily",
-        start_date=start_date,
-        end_date=end_date,
-        adjust=""
-    )
+    def fetch():
+        return ak.fund_etf_hist_em(
+            symbol=str(symbol),
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust=""
+        )
 
-    if df is None or df.empty:
-        return pd.DataFrame()
+    df, error = run_with_retry(fetch, retry=3, sleep_seconds=2)
+
+    if df is not None and not df.empty:
+        save_df_cache(df, cache_file)
+    else:
+        cached = load_df_cache(cache_file)
+        if not cached.empty:
+            st.warning("历史行情接口暂时不稳定，当前使用最近一次成功缓存数据。")
+            df = cached
+        else:
+            st.warning(f"历史行情暂时获取失败，请稍后刷新。错误信息：{error}")
+            return pd.DataFrame()
 
     df["日期"] = pd.to_datetime(df["日期"])
     df = df.sort_values("日期").reset_index(drop=True)
@@ -196,6 +275,9 @@ def normalize_spot_columns(df):
     """
     兼容不同AkShare版本字段。
     """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
     mapping = {}
     for col in df.columns:
         if col in ["代码", "基金代码"]:
@@ -667,7 +749,7 @@ def build_market_table(spot_df, watch_codes):
     """
     df = normalize_spot_columns(spot_df).copy()
 
-    if "代码" not in df.columns:
+    if df.empty or "代码" not in df.columns:
         return pd.DataFrame()
 
     df["代码"] = df["代码"].astype(str)
@@ -737,6 +819,10 @@ with st.sidebar:
     )
 
     st.divider()
+
+    if st.button("清除页面缓存并刷新"):
+        st.cache_data.clear()
+        st.rerun()
 
     st.caption(
         "说明：公开数据接口无法等同于券商Level-2逐笔主力数据。"
