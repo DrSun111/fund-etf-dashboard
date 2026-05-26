@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FundPilot Pro | 基金智能驾驶舱
+FundPilot Pro | 基金一路长红
 
 运行方式:
     streamlit run fundpilot_pro.py
