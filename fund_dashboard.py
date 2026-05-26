@@ -56,6 +56,28 @@ def load_df_cache(file_path: Path) -> pd.DataFrame:
 # =========================
 CUSTOM_CSS = """
 <style>
+.chart-panel {
+    background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,16,32,0.96));
+    border: 1px solid rgba(148,163,184,0.18);
+    border-radius: 18px;
+    padding: 18px 20px 8px 20px;
+    margin-bottom: 14px;
+}
+
+.panel-title {
+    font-size: 18px;
+    font-weight: 800;
+    color: #FFFFFF !important;
+    margin-bottom: 4px;
+}
+
+.panel-subtitle {
+    font-size: 13px;
+    color: #CBD5E1 !important;
+    margin-bottom: 10px;
+}
+
+<style>
 html, body, [data-testid="stAppViewContainer"] {
     background: #050816 !important;
     color: #F8FAFC !important;
@@ -752,12 +774,12 @@ def generate_commentary(latest, trend_label, risk_label, money_label, action_lab
     return "\n\n".join(lines)
 
 
-def draw_professional_chart(hist, title):
+def draw_professional_chart(hist):
     fig = make_subplots(
         rows=3,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.06,
+        vertical_spacing=0.075,
         row_heights=[0.58, 0.22, 0.20],
         subplot_titles=(
             "价格/净值走势与均线结构",
@@ -766,10 +788,25 @@ def draw_professional_chart(hist, title):
         )
     )
 
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["收盘"], mode="lines", name="收盘价/净值", line=dict(width=2.8, color="#E5E7EB")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA5"], mode="lines", name="MA5", line=dict(width=1.5, color="#38BDF8")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA20"], mode="lines", name="MA20", line=dict(width=1.8, color="#FBBF24")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA60"], mode="lines", name="MA60", line=dict(width=1.8, color="#A78BFA")), row=1, col=1)
+    fig.add_trace(
+        go.Scatter(
+            x=hist["日期"], y=hist["收盘"], mode="lines", name="收盘价/净值",
+            line=dict(width=3.0, color="#E5E7EB")
+        ),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=hist["日期"], y=hist["MA5"], mode="lines", name="MA5", line=dict(width=1.7, color="#38BDF8")),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=hist["日期"], y=hist["MA20"], mode="lines", name="MA20", line=dict(width=1.9, color="#FBBF24")),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=hist["日期"], y=hist["MA60"], mode="lines", name="MA60", line=dict(width=1.9, color="#A78BFA")),
+        row=1, col=1
+    )
 
     strong_in = hist[hist["资金信号"] == "强流入"]
     strong_out = hist[hist["资金信号"] == "强撤出"]
@@ -777,42 +814,91 @@ def draw_professional_chart(hist, title):
     warm_out = hist[hist["资金信号"] == "温和撤出"]
 
     if not strong_in.empty:
-        fig.add_trace(go.Scatter(x=strong_in["日期"], y=strong_in["收盘"], mode="markers", name="强流入位置", marker=dict(size=11, color="#22C55E", symbol="triangle-up")), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=strong_in["日期"], y=strong_in["收盘"], mode="markers", name="强流入位置",
+                marker=dict(size=10, color="#22C55E", symbol="triangle-up")
+            ),
+            row=1, col=1
+        )
 
     if not strong_out.empty:
-        fig.add_trace(go.Scatter(x=strong_out["日期"], y=strong_out["收盘"], mode="markers", name="强撤出位置", marker=dict(size=11, color="#EF4444", symbol="triangle-down")), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=strong_out["日期"], y=strong_out["收盘"], mode="markers", name="强撤出位置",
+                marker=dict(size=10, color="#EF4444", symbol="triangle-down")
+            ),
+            row=1, col=1
+        )
 
     if not warm_in.empty:
-        fig.add_trace(go.Scatter(x=warm_in["日期"], y=warm_in["收盘"], mode="markers", name="温和流入", marker=dict(size=7, color="#86EFAC", symbol="circle")), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=warm_in["日期"], y=warm_in["收盘"], mode="markers", name="温和流入",
+                marker=dict(size=7, color="#86EFAC", symbol="circle")
+            ),
+            row=1, col=1
+        )
 
     if not warm_out.empty:
-        fig.add_trace(go.Scatter(x=warm_out["日期"], y=warm_out["收盘"], mode="markers", name="温和撤出", marker=dict(size=7, color="#FCA5A5", symbol="circle")), row=1, col=1)
+        fig.add_trace(
+            go.Scatter(
+                x=warm_out["日期"], y=warm_out["收盘"], mode="markers", name="温和撤出",
+                marker=dict(size=7, color="#FCA5A5", symbol="circle")
+            ),
+            row=1, col=1
+        )
 
     amount_colors = np.where(hist["日涨跌幅"] >= 0, "#22C55E", "#EF4444")
-    fig.add_trace(go.Bar(x=hist["日期"], y=hist["成交额"] / 1e8, name="成交额/亿", marker_color=amount_colors, opacity=0.72), row=2, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["成交额_MA20"] / 1e8, mode="lines", name="成交额MA20/亿", line=dict(width=1.8, color="#FBBF24")), row=2, col=1)
+    fig.add_trace(
+        go.Bar(x=hist["日期"], y=hist["成交额"] / 1e8, name="成交额/亿", marker_color=amount_colors, opacity=0.72),
+        row=2, col=1
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=hist["日期"], y=hist["成交额_MA20"] / 1e8, mode="lines", name="成交额MA20/亿",
+            line=dict(width=1.8, color="#FBBF24")
+        ),
+        row=2, col=1
+    )
 
     money_colors = np.where(hist["资金行为强度"] >= 0, "#22C55E", "#EF4444")
-    fig.add_trace(go.Bar(x=hist["日期"], y=hist["资金行为强度"], name="资金行为强度", marker_color=money_colors, opacity=0.78), row=3, col=1)
+    fig.add_trace(
+        go.Bar(x=hist["日期"], y=hist["资金行为强度"], name="资金行为强度", marker_color=money_colors, opacity=0.78),
+        row=3, col=1
+    )
     fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#94A3B8", row=3, col=1)
 
     fig.update_layout(
-        title=dict(text=title, font=dict(size=22, color="#F8FAFC")),
-        height=820,
+        height=860,
         hovermode="x unified",
         plot_bgcolor="#0F172A",
         paper_bgcolor="#0F172A",
-        font=dict(color="#CBD5E1"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1),
-        margin=dict(l=25, r=25, t=85, b=35)
+        font=dict(color="#F8FAFC", size=13),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.08,
+            xanchor="left",
+            x=0.0,
+            font=dict(color="#F8FAFC", size=12),
+            bgcolor="rgba(15,23,42,0.78)",
+            bordercolor="rgba(148,163,184,0.15)",
+            borderwidth=1
+        ),
+        margin=dict(l=30, r=30, t=95, b=35)
     )
 
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.14)", zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.14)", zeroline=False)
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.16)", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.16)", zeroline=False)
 
     fig.update_yaxes(title_text="价格/净值", row=1, col=1)
     fig.update_yaxes(title_text="成交额/亿", row=2, col=1)
     fig.update_yaxes(title_text="强度", row=3, col=1)
+
+    for ann in fig["layout"]["annotations"]:
+        ann["font"] = dict(size=16, color="#F8FAFC")
+        ann["xanchor"] = "center"
 
     return fig
 
@@ -846,7 +932,7 @@ def build_market_table(spot_df, watch_codes):
 # =========================
 st.markdown('<div class="main-title">📊 基金 / ETF 专业实时分析看板</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">东方财富直连 · 快速刷新 · 分模块基金池 · 用户代码自查 · 趋势结构 · 资金行为代理</div>',
+    '<div class="sub-title">东方财富直连 · 快速刷新 · 分模块基金池 · 用户代码自查 · 深色专业看盘界面</div>',
     unsafe_allow_html=True
 )
 
@@ -973,20 +1059,31 @@ try:
     c9.metric("量能倍率", f"{latest['量能倍率']:.2f}x" if pd.notna(latest["量能倍率"]) else "暂无")
     c10.metric("策略提示", summary["action_label"])
 
-    st.caption(
-        f"当前模块：{module_name}；数据状态：实时行情 = {spot_source}；历史行情 = {hist_source}；"
-        f"历史数据最后日期 = {latest['日期'].strftime('%Y-%m-%d') if pd.notna(latest['日期']) else '未知'}"
+    st.markdown(
+        f"""
+        <div class="panel-subtitle">
+        当前模块：{module_name}；数据状态：实时行情 = {spot_source}；历史行情 = {hist_source}；
+        历史数据最后日期 = {latest['日期'].strftime('%Y-%m-%d') if pd.notna(latest['日期']) else '未知'}
+        </div>
+        """,
+        unsafe_allow_html=True
     )
 
     st.divider()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 专业分析图", "🧠 自动解读", "🔥 模块行情池", "📋 信号明细", "🧭 全模块速览"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([" 看盘图", " 自动解读", " 模块行情池", " 信号明细", " 全模块速览"])
 
     with tab1:
-        fig = draw_professional_chart(
-            hist,
-            title=f"{real_name}（{selected_code}）专业趋势与资金行为分析"
+        st.markdown(
+            f"""
+            <div class="chart-panel">
+                <div class="panel-title">{real_name}（{selected_code}）</div>
+                <div class="panel-subtitle">专业趋势与资金行为分析 · 均线结构 / 成交额 / 资金行为代理信号</div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
+        fig = draw_professional_chart(hist)
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
@@ -996,7 +1093,7 @@ try:
             st.markdown(
                 f"""
                 <div class="signal-card">
-                    <div class="signal-title">🧠 自动分析结论</div>
+                    <div class="signal-title"> 自动分析结论</div>
                     <div class="signal-text">{summary["comment"].replace(chr(10), "<br>")}</div>
                 </div>
                 """,
@@ -1006,7 +1103,7 @@ try:
             st.markdown(
                 """
                 <div class="signal-card">
-                    <div class="signal-title">📌 信号解释</div>
+                    <div class="signal-title"> 信号解释</div>
                     <div class="signal-text">
                     <span class="good">强流入</span>：上涨幅度较大，同时成交额明显放大，OBV强于短期均值。<br>
                     <span class="bad">强撤出</span>：下跌幅度较大，同时成交额明显放大，OBV弱于短期均值。<br>
