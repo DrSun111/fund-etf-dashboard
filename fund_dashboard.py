@@ -52,89 +52,144 @@ def load_df_cache(file_path: Path) -> pd.DataFrame:
 
 
 # =========================
-# 自定义高级界面风格
+# 高科技深色界面样式
 # =========================
 CUSTOM_CSS = """
 <style>
-.chart-panel {
-    background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(10,16,32,0.96));
-    border: 1px solid rgba(148,163,184,0.18);
-    border-radius: 18px;
-    padding: 18px 20px 8px 20px;
-    margin-bottom: 14px;
+:root {
+    --bg-1: #050816;
+    --bg-2: #0a1022;
+    --panel: rgba(11, 18, 36, 0.88);
+    --panel-2: rgba(17, 26, 51, 0.92);
+    --line: rgba(99, 179, 237, 0.22);
+    --cyan: #58d5ff;
+    --blue: #6ea8ff;
+    --green: #41f0c0;
+    --text: #f8fbff;
+    --muted: #a8b7cf;
+    --warning: #ffc857;
+    --danger: #ff6b81;
 }
 
-.panel-title {
-    font-size: 18px;
-    font-weight: 800;
-    color: #FFFFFF !important;
-    margin-bottom: 4px;
-}
-
-.panel-subtitle {
-    font-size: 13px;
-    color: #CBD5E1 !important;
-    margin-bottom: 10px;
-}
-
-<style>
 html, body, [data-testid="stAppViewContainer"] {
-    background: #050816 !important;
-    color: #F8FAFC !important;
+    background: radial-gradient(circle at top left, #0b1633 0%, #071126 30%, #050816 65%, #040611 100%) !important;
+    color: var(--text) !important;
 }
 
 [data-testid="stHeader"] {
-    background: rgba(5, 8, 22, 0.88) !important;
+    background: rgba(5, 8, 22, 0.76) !important;
+    border-bottom: 1px solid rgba(88, 213, 255, 0.10);
 }
 
 [data-testid="stSidebar"] {
-    background: #0B1020 !important;
-    color: #F8FAFC !important;
+    background: linear-gradient(180deg, #06112a 0%, #050a1b 100%) !important;
+    border-right: 1px solid rgba(88, 213, 255, 0.12);
 }
 
 [data-testid="stSidebar"] * {
-    color: #F8FAFC !important;
+    color: var(--text) !important;
 }
 
 .block-container {
     padding-top: 1.2rem;
     padding-bottom: 2rem;
+    max-width: 96%;
 }
 
 .main-title {
     font-size: 34px;
-    font-weight: 850;
-    letter-spacing: 0.5px;
-    margin-bottom: 0.2rem;
-    color: #FFFFFF !important;
+    font-weight: 860;
+    letter-spacing: 0.3px;
+    color: #ffffff !important;
+    margin-bottom: 0.25rem;
+    text-shadow: 0 0 18px rgba(88,213,255,0.15);
 }
 
 .sub-title {
     font-size: 15px;
-    color: #D6DEE9 !important;
-    margin-bottom: 1.2rem;
+    color: #b9c7dd !important;
+    margin-bottom: 1.05rem;
 }
 
-.stMarkdown, .stText, p, span, label, div {
-    color: #F8FAFC !important;
+.hero-panel {
+    background: linear-gradient(135deg, rgba(10,16,34,0.92), rgba(14,24,48,0.94));
+    border: 1px solid rgba(88,213,255,0.14);
+    border-radius: 22px;
+    padding: 18px 22px;
+    box-shadow: 0 10px 36px rgba(0, 0, 0, 0.22), inset 0 0 0 1px rgba(255,255,255,0.02);
+    margin-bottom: 14px;
 }
 
-h1, h2, h3, h4, h5, h6 {
-    color: #FFFFFF !important;
+.status-banner-ok {
+    background: linear-gradient(90deg, rgba(20,62,55,0.92), rgba(14,39,35,0.92));
+    color: #d7fff3 !important;
+    border: 1px solid rgba(65,240,192,0.22);
+    border-radius: 16px;
+    padding: 14px 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.status-banner-warn {
+    background: linear-gradient(90deg, rgba(63,47,12,0.94), rgba(49,36,10,0.94));
+    color: #fff2c7 !important;
+    border: 1px solid rgba(255,200,87,0.22);
+    border-radius: 16px;
+    padding: 14px 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.status-banner-danger {
+    background: linear-gradient(90deg, rgba(64,24,35,0.94), rgba(44,18,26,0.94));
+    color: #ffd7e0 !important;
+    border: 1px solid rgba(255,107,129,0.22);
+    border-radius: 16px;
+    padding: 14px 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+}
+
+.info-line {
+    color: #9eb0ca !important;
+    font-size: 13px;
+    margin: 8px 0 14px 2px;
+}
+
+.chart-panel {
+    background: linear-gradient(180deg, rgba(10,16,34,0.94), rgba(7,13,28,0.95));
+    border: 1px solid rgba(88,213,255,0.14);
+    border-radius: 22px;
+    padding: 18px 22px 12px 22px;
+    margin-bottom: 10px;
+    box-shadow: 0 10px 36px rgba(0, 0, 0, 0.24);
+}
+
+.panel-title {
+    font-size: 18px;
+    font-weight: 820;
+    color: #ffffff !important;
+    margin-bottom: 4px;
+}
+
+.panel-subtitle {
+    font-size: 13px;
+    color: #afc2de !important;
+    margin-bottom: 8px;
 }
 
 .signal-card {
     padding: 18px 20px;
     border-radius: 18px;
-    background: linear-gradient(135deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96));
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+    background: linear-gradient(135deg, rgba(12, 20, 40, 0.96), rgba(15, 23, 42, 0.96));
+    border: 1px solid rgba(88,213,255,0.12);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
     margin-bottom: 12px;
 }
 
 .signal-title {
     font-size: 17px;
-    font-weight: 750;
+    font-weight: 760;
     color: #FFFFFF !important;
     margin-bottom: 8px;
 }
@@ -142,27 +197,108 @@ h1, h2, h3, h4, h5, h6 {
 .signal-text {
     font-size: 14px;
     line-height: 1.75;
-    color: #F8FAFC !important;
+    color: #EAF1FF !important;
 }
 
-.good { color: #22c55e !important; font-weight: 750; }
-.warn { color: #f59e0b !important; font-weight: 750; }
-.bad { color: #ef4444 !important; font-weight: 750; }
-.neutral { color: #CBD5E1 !important; font-weight: 750; }
+.good { color: #4ff0b6 !important; font-weight: 760; }
+.warn { color: #ffc857 !important; font-weight: 760; }
+.bad { color: #ff7b96 !important; font-weight: 760; }
+.neutral { color: #b8c6db !important; font-weight: 760; }
 
-div[data-testid="stMetricValue"] {
-    font-size: 24px;
-    font-weight: 850;
-    color: #FFFFFF !important;
+h1, h2, h3, h4, h5, h6, p, span, label {
+    color: var(--text) !important;
+}
+
+/* 关键：给侧边栏下拉框和输入框做深色科技样式 */
+[data-testid="stSidebar"] [data-baseweb="select"] > div,
+[data-testid="stSidebar"] [data-baseweb="input"] > div,
+[data-testid="stSidebar"] textarea,
+[data-testid="stSidebar"] input {
+    background: linear-gradient(180deg, rgba(11,19,38,0.98), rgba(14,24,48,0.98)) !important;
+    color: #f8fbff !important;
+    border: 1px solid rgba(88,213,255,0.24) !important;
+    border-radius: 14px !important;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02), 0 0 0 1px rgba(88,213,255,0.04);
+}
+
+[data-testid="stSidebar"] [data-baseweb="select"] span,
+[data-testid="stSidebar"] [data-baseweb="select"] div,
+[data-testid="stSidebar"] [data-baseweb="input"] input {
+    color: #f8fbff !important;
+}
+
+/* 下拉菜单弹层 */
+div[role="listbox"] {
+    background: #0d1630 !important;
+    border: 1px solid rgba(88,213,255,0.22) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32) !important;
+}
+div[role="option"] {
+    color: #ecf4ff !important;
+    background: transparent !important;
+}
+div[role="option"]:hover {
+    background: rgba(88,213,255,0.12) !important;
+}
+div[aria-selected="true"] {
+    background: rgba(88,213,255,0.16) !important;
+    color: #ffffff !important;
+}
+
+/* 顶部指标卡：强制深色背景，避免白字落在浅底色上 */
+div[data-testid="stMetric"] {
+    background: linear-gradient(135deg, rgba(10,16,34,0.96), rgba(14,24,48,0.96)) !important;
+    border: 1px solid rgba(88,213,255,0.12) !important;
+    border-radius: 18px !important;
+    padding: 16px 18px !important;
+    box-shadow: 0 8px 26px rgba(0,0,0,0.18);
+    min-height: 104px;
 }
 
 div[data-testid="stMetricLabel"] {
-    font-size: 14px;
-    color: #E5E7EB !important;
+    font-size: 13px;
+    color: #aabbd3 !important;
+    font-weight: 600;
 }
 
-button, input, textarea, select {
-    color: #F8FAFC !important;
+div[data-testid="stMetricValue"] {
+    font-size: 26px;
+    font-weight: 850;
+    color: #ffffff !important;
+}
+
+/* tabs */
+button[data-baseweb="tab"] {
+    color: #d3e2f6 !important;
+    font-weight: 700 !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #ffffff !important;
+}
+button[data-baseweb="tab-highlight"] {
+    background: linear-gradient(90deg, #39c7ff, #6ea8ff) !important;
+    height: 3px !important;
+    border-radius: 999px !important;
+}
+
+/* dataframe */
+[data-testid="stDataFrame"] {
+    border: 1px solid rgba(88,213,255,0.10);
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+/* 按钮和滑块 */
+.stButton button {
+    background: linear-gradient(90deg, rgba(24,38,73,0.98), rgba(20,31,60,0.98)) !important;
+    color: #f8fbff !important;
+    border: 1px solid rgba(88,213,255,0.22) !important;
+    border-radius: 12px !important;
+}
+.stButton button:hover {
+    border-color: rgba(88,213,255,0.45) !important;
+    box-shadow: 0 0 18px rgba(88,213,255,0.12) !important;
 }
 </style>
 """
@@ -171,9 +307,6 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # =========================
 # 基金/ETF模块池
-# 说明：
-# 1. 覆盖宽基、科技、电气电力、资源周期、金融地产、消费医药、港股海外、商品等模块。
-# 2. 若模块里没有目标基金，可在侧边栏打开“用户自查”，输入任意6位基金/ETF代码。
 # =========================
 ETF_MODULES = {
     "宽基指数": {
@@ -287,11 +420,6 @@ def format_pct(x):
 
 
 def get_sec_id(symbol: str) -> str:
-    """
-    东方财富 secid：
-    上海市场通常为 1.xxxxxx，深圳市场通常为 0.xxxxxx。
-    ETF：5开头多为上海，1开头多为深圳。
-    """
     symbol = str(symbol).strip()
     if symbol.startswith(("5", "6", "9")):
         return f"1.{symbol}"
@@ -299,10 +427,6 @@ def get_sec_id(symbol: str) -> str:
 
 
 def request_json_fast(url: str, params: dict, timeout: int = 6):
-    """
-    快速请求：不做三次重复重试，只请求一次。
-    目的是提高刷新速度，失败后直接进入缓存/备用展示。
-    """
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -312,7 +436,6 @@ def request_json_fast(url: str, params: dict, timeout: int = 6):
         "Accept": "application/json,text/plain,*/*",
         "Referer": "https://quote.eastmoney.com/"
     }
-
     response = requests.get(url, params=params, headers=headers, timeout=timeout)
     response.raise_for_status()
     return response.json()
@@ -322,12 +445,13 @@ def request_json_fast(url: str, params: dict, timeout: int = 6):
 # 东方财富直连接口
 # =========================
 def fetch_spot_from_eastmoney(codes) -> pd.DataFrame:
-    """
-    东方财富实时行情。
-    用于关注 ETF 池实时强弱排名。
-    """
-    secids = ",".join([get_sec_id(code) for code in codes])
+    unique_codes = []
+    for code in codes:
+        code = str(code).strip()
+        if code and code not in unique_codes:
+            unique_codes.append(code)
 
+    secids = ",".join([get_sec_id(code) for code in unique_codes])
     url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
     params = {
         "fltt": "2",
@@ -337,7 +461,6 @@ def fetch_spot_from_eastmoney(codes) -> pd.DataFrame:
 
     data = request_json_fast(url, params=params, timeout=6)
     diff = data.get("data", {}).get("diff", [])
-
     if not diff:
         raise RuntimeError("东方财富实时行情接口返回为空")
 
@@ -357,21 +480,17 @@ def fetch_spot_from_eastmoney(codes) -> pd.DataFrame:
     for col in ["最新价", "涨跌幅", "涨跌额", "成交量", "成交额"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-
     return df
 
 
 def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
-    """
-    东方财富日K历史行情。
-    """
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     params = {
         "secid": get_sec_id(symbol),
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "klt": "101",     # 日K
-        "fqt": "0",       # 不复权
+        "klt": "101",
+        "fqt": "0",
         "beg": "20000101",
         "end": dt.datetime.now().strftime("%Y%m%d"),
         "lmt": str(max(days * 2, 600))
@@ -379,7 +498,6 @@ def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
 
     data = request_json_fast(url, params=params, timeout=8)
     klines = data.get("data", {}).get("klines", [])
-
     if not klines:
         raise RuntimeError("东方财富历史行情接口返回为空")
 
@@ -388,7 +506,6 @@ def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
         parts = line.split(",")
         if len(parts) < 7:
             continue
-
         rows.append({
             "日期": parts[0],
             "开盘": parts[1],
@@ -408,7 +525,6 @@ def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
     numeric_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-
     df = df.sort_values("日期").reset_index(drop=True)
     return df.tail(days).reset_index(drop=True)
 
@@ -418,51 +534,28 @@ def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
 # =========================
 def get_base_price(symbol: str) -> float:
     base_price_map = {
-        "510300": 3.8,
-        "159915": 1.8,
-        "588000": 0.9,
-        "512480": 0.8,
-        "159995": 0.9,
-        "515030": 1.1,
-        "515790": 0.75,
-        "512660": 1.0,
-        "512880": 0.9,
-        "512010": 0.45,
-        "159928": 0.9,
-        "512400": 1.2,
-        "516780": 1.0,
-        "515210": 1.0,
-        "515220": 1.3,
-        "159930": 1.0,
-        "516020": 0.75,
-        "518880": 5.2,
-        "513130": 0.55,
-        "513100": 1.6,
-    }
-    base_price_map.update({
-        "510050": 2.7, "510500": 5.8, "512100": 2.3, "159781": 0.8, "510880": 3.0,
+        "510300": 3.8, "510050": 2.7, "510500": 5.8, "512100": 2.3, "159915": 1.8,
+        "588000": 0.9, "159781": 0.8, "510880": 3.0, "512480": 0.8, "159995": 0.9,
         "515980": 0.9, "516510": 0.8, "515230": 0.7, "515880": 1.1, "515050": 1.0,
-        "562500": 1.0, "159888": 1.0, "561910": 0.8, "159566": 1.0, "562960": 1.0,
-        "561560": 1.0, "516160": 0.8, "159790": 0.8, "562850": 1.0,
-        "512800": 1.1, "515630": 0.9, "512200": 0.8, "510230": 1.0,
-        "512690": 0.8, "515170": 0.8, "512170": 0.4, "159992": 0.6,
-        "159865": 0.8, "159825": 0.8, "513330": 0.5, "159792": 0.6,
-        "159920": 1.0, "513500": 1.6, "513030": 1.0, "513520": 1.0,
-    })
+        "562500": 1.0, "159888": 1.0, "512660": 1.0, "515030": 1.1, "515790": 0.75,
+        "561910": 0.8, "159566": 1.0, "562960": 1.0, "561560": 1.0, "516160": 0.8,
+        "159790": 0.8, "562850": 1.0, "512400": 1.2, "516780": 1.0, "515210": 1.0,
+        "515220": 1.3, "159930": 1.0, "516020": 0.75, "162719": 1.0, "518880": 5.2,
+        "159985": 1.0, "512880": 0.9, "512800": 1.1, "515630": 0.9, "512200": 0.8,
+        "510230": 1.0, "159928": 0.9, "512690": 0.8, "515170": 0.8, "512010": 0.45,
+        "512170": 0.4, "159992": 0.6, "159865": 0.8, "159825": 0.8, "513130": 0.55,
+        "513330": 0.5, "159792": 0.6, "159920": 1.0, "513100": 1.6, "513500": 1.6,
+        "513030": 1.0, "513520": 1.0,
+    }
     return base_price_map.get(str(symbol), 1.0)
 
 
 def generate_fallback_history(symbol: str, days: int = 240) -> pd.DataFrame:
-    """
-    最后兜底：接口失败且没有缓存时，生成备用展示数据。
-    该数据不是真实行情，只用于保证看板能打开。
-    """
     seed = abs(hash(str(symbol))) % (2**32)
     rng = np.random.default_rng(seed)
 
     dates = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=days)
     base_price = get_base_price(symbol)
-
     returns = rng.normal(loc=0.0002, scale=0.013, size=len(dates))
     trend = np.linspace(-0.02, 0.04, len(dates))
     prices = base_price * np.cumprod(1 + returns) * (1 + trend)
@@ -470,7 +563,6 @@ def generate_fallback_history(symbol: str, days: int = 240) -> pd.DataFrame:
     open_prices = prices * (1 + rng.normal(0, 0.004, len(dates)))
     high_prices = np.maximum(open_prices, prices) * (1 + rng.uniform(0.002, 0.016, len(dates)))
     low_prices = np.minimum(open_prices, prices) * (1 - rng.uniform(0.002, 0.016, len(dates)))
-
     amount = rng.uniform(1.2e8, 16e8, len(dates))
     volume = amount / np.maximum(prices, 0.01) / 100
 
@@ -487,16 +579,19 @@ def generate_fallback_history(symbol: str, days: int = 240) -> pd.DataFrame:
     return df
 
 
-def generate_fallback_spot() -> pd.DataFrame:
+def generate_fallback_spot(codes=None) -> pd.DataFrame:
     rows = []
     rng = np.random.default_rng(int(pd.Timestamp.today().strftime("%Y%m%d")))
+    items = DEFAULT_ETFS.items()
+    if codes:
+        code_set = set([str(x) for x in codes])
+        items = [(name, code) for name, code in DEFAULT_ETFS.items() if str(code) in code_set]
 
-    for name, code in DEFAULT_ETFS.items():
+    for name, code in items:
         base = get_base_price(code)
         pct = rng.normal(0, 1.1)
         latest = base * (1 + pct / 100)
         amount = rng.uniform(1e8, 20e8)
-
         rows.append({
             "代码": code,
             "名称": name,
@@ -514,13 +609,7 @@ def generate_fallback_spot() -> pd.DataFrame:
 # =========================
 @st.cache_data(ttl=30, show_spinner=False)
 def get_etf_spot(codes_tuple):
-    """
-    快速实时行情：
-    东方财富一次请求 → 缓存 → 备用展示。
-    不做三次重复请求。
-    """
     codes = list(codes_tuple)
-
     try:
         df = fetch_spot_from_eastmoney(codes)
         save_df_cache(df, SPOT_CACHE_FILE)
@@ -532,19 +621,12 @@ def get_etf_spot(codes_tuple):
             cached = cached[cached["代码"].isin([str(x) for x in codes])]
             if not cached.empty:
                 return cached, f"缓存实时行情，东方财富错误：{e}"
-
-        return generate_fallback_spot(), f"备用展示数据，东方财富错误：{e}"
+        return generate_fallback_spot(codes), f"备用展示数据，东方财富错误：{e}"
 
 
 @st.cache_data(ttl=120, show_spinner=False)
 def get_etf_history(symbol: str, days: int = 240):
-    """
-    快速历史行情：
-    东方财富一次请求 → 缓存 → 备用展示。
-    不做三次重复请求。
-    """
     cache_file = history_cache_file(symbol)
-
     try:
         df = fetch_history_from_eastmoney(symbol, days)
         save_df_cache(df, cache_file)
@@ -567,9 +649,6 @@ def get_etf_history(symbol: str, days: int = 240):
 
 
 def normalize_spot_columns(df):
-    """
-    兼容字段。
-    """
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -589,7 +668,6 @@ def normalize_spot_columns(df):
             mapping[col] = "成交额"
         elif col in ["成交量"]:
             mapping[col] = "成交量"
-
     return df.rename(columns=mapping)
 
 
@@ -598,12 +676,10 @@ def normalize_spot_columns(df):
 # =========================
 def add_indicators(df):
     df = df.copy()
-
     df["MA5"] = df["收盘"].rolling(5).mean()
     df["MA10"] = df["收盘"].rolling(10).mean()
     df["MA20"] = df["收盘"].rolling(20).mean()
     df["MA60"] = df["收盘"].rolling(60).mean()
-
     df["日涨跌幅"] = df["收盘"].pct_change() * 100
 
     if "成交额" in df.columns:
@@ -616,24 +692,17 @@ def add_indicators(df):
         df["成交额_MA20"] = np.nan
         df["量能倍率"] = np.nan
 
-    if "成交量" in df.columns:
-        volume = df["成交量"].fillna(0)
-    else:
-        volume = df["成交额"].fillna(0)
-
+    volume = df["成交量"].fillna(0) if "成交量" in df.columns else df["成交额"].fillna(0)
     price_diff = df["收盘"].diff()
     direction = np.where(price_diff > 0, 1, np.where(price_diff < 0, -1, 0))
     df["OBV"] = (direction * volume).cumsum()
     df["OBV_MA10"] = df["OBV"].rolling(10).mean()
 
     df["资金行为强度"] = df["日涨跌幅"] * df["成交额"] / 1e8
-
     df["均线偏离_MA5"] = (df["收盘"] / df["MA5"] - 1) * 100
     df["均线偏离_MA20"] = (df["收盘"] / df["MA20"] - 1) * 100
     df["均线偏离_MA60"] = (df["收盘"] / df["MA60"] - 1) * 100
-
     df["资金信号"] = df.apply(classify_money_signal, axis=1)
-
     return df
 
 
@@ -679,7 +748,6 @@ def compute_summary(hist):
     latest = hist.iloc[-1]
     close = latest["收盘"]
     money_signal = latest["资金信号"]
-
     trend_score = 0
 
     if pd.notna(latest["MA5"]) and close > latest["MA5"]:
@@ -743,10 +811,8 @@ def generate_commentary(latest, trend_label, risk_label, money_label, action_lab
 
     if pd.notna(latest["MA5"]):
         lines.append("价格位于5日均线上方，说明超短期动能尚可。" if close > latest["MA5"] else "价格低于5日均线，说明超短期动能偏弱。")
-
     if pd.notna(latest["MA20"]):
         lines.append("价格站上20日均线，短期结构有修复迹象。" if close > latest["MA20"] else "价格仍低于20日均线，短期趋势尚未完全扭转。")
-
     if pd.notna(latest["MA60"]):
         lines.append("价格处于60日均线上方，中期结构相对稳定。" if close > latest["MA60"] else "价格低于60日均线，中期趋势仍需谨慎。")
 
@@ -788,25 +854,10 @@ def draw_professional_chart(hist):
         )
     )
 
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"], y=hist["收盘"], mode="lines", name="收盘价/净值",
-            line=dict(width=3.0, color="#E5E7EB")
-        ),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Scatter(x=hist["日期"], y=hist["MA5"], mode="lines", name="MA5", line=dict(width=1.7, color="#38BDF8")),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Scatter(x=hist["日期"], y=hist["MA20"], mode="lines", name="MA20", line=dict(width=1.9, color="#FBBF24")),
-        row=1, col=1
-    )
-    fig.add_trace(
-        go.Scatter(x=hist["日期"], y=hist["MA60"], mode="lines", name="MA60", line=dict(width=1.9, color="#A78BFA")),
-        row=1, col=1
-    )
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["收盘"], mode="lines", name="收盘价/净值", line=dict(width=3.0, color="#E5E7EB")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA5"], mode="lines", name="MA5", line=dict(width=1.7, color="#38BDF8")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA20"], mode="lines", name="MA20", line=dict(width=1.9, color="#FBBF24")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA60"], mode="lines", name="MA60", line=dict(width=1.9, color="#A78BFA")), row=1, col=1)
 
     strong_in = hist[hist["资金信号"] == "强流入"]
     strong_out = hist[hist["资金信号"] == "强撤出"]
@@ -814,59 +865,20 @@ def draw_professional_chart(hist):
     warm_out = hist[hist["资金信号"] == "温和撤出"]
 
     if not strong_in.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=strong_in["日期"], y=strong_in["收盘"], mode="markers", name="强流入位置",
-                marker=dict(size=10, color="#22C55E", symbol="triangle-up")
-            ),
-            row=1, col=1
-        )
-
+        fig.add_trace(go.Scatter(x=strong_in["日期"], y=strong_in["收盘"], mode="markers", name="强流入位置", marker=dict(size=10, color="#22C55E", symbol="triangle-up")), row=1, col=1)
     if not strong_out.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=strong_out["日期"], y=strong_out["收盘"], mode="markers", name="强撤出位置",
-                marker=dict(size=10, color="#EF4444", symbol="triangle-down")
-            ),
-            row=1, col=1
-        )
-
+        fig.add_trace(go.Scatter(x=strong_out["日期"], y=strong_out["收盘"], mode="markers", name="强撤出位置", marker=dict(size=10, color="#EF4444", symbol="triangle-down")), row=1, col=1)
     if not warm_in.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=warm_in["日期"], y=warm_in["收盘"], mode="markers", name="温和流入",
-                marker=dict(size=7, color="#86EFAC", symbol="circle")
-            ),
-            row=1, col=1
-        )
-
+        fig.add_trace(go.Scatter(x=warm_in["日期"], y=warm_in["收盘"], mode="markers", name="温和流入", marker=dict(size=7, color="#86EFAC", symbol="circle")), row=1, col=1)
     if not warm_out.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=warm_out["日期"], y=warm_out["收盘"], mode="markers", name="温和撤出",
-                marker=dict(size=7, color="#FCA5A5", symbol="circle")
-            ),
-            row=1, col=1
-        )
+        fig.add_trace(go.Scatter(x=warm_out["日期"], y=warm_out["收盘"], mode="markers", name="温和撤出", marker=dict(size=7, color="#FCA5A5", symbol="circle")), row=1, col=1)
 
     amount_colors = np.where(hist["日涨跌幅"] >= 0, "#22C55E", "#EF4444")
-    fig.add_trace(
-        go.Bar(x=hist["日期"], y=hist["成交额"] / 1e8, name="成交额/亿", marker_color=amount_colors, opacity=0.72),
-        row=2, col=1
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"], y=hist["成交额_MA20"] / 1e8, mode="lines", name="成交额MA20/亿",
-            line=dict(width=1.8, color="#FBBF24")
-        ),
-        row=2, col=1
-    )
+    fig.add_trace(go.Bar(x=hist["日期"], y=hist["成交额"] / 1e8, name="成交额/亿", marker_color=amount_colors, opacity=0.72), row=2, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["成交额_MA20"] / 1e8, mode="lines", name="成交额MA20/亿", line=dict(width=1.8, color="#FBBF24")), row=2, col=1)
 
     money_colors = np.where(hist["资金行为强度"] >= 0, "#22C55E", "#EF4444")
-    fig.add_trace(
-        go.Bar(x=hist["日期"], y=hist["资金行为强度"], name="资金行为强度", marker_color=money_colors, opacity=0.78),
-        row=3, col=1
-    )
+    fig.add_trace(go.Bar(x=hist["日期"], y=hist["资金行为强度"], name="资金行为强度", marker_color=money_colors, opacity=0.78), row=3, col=1)
     fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#94A3B8", row=3, col=1)
 
     fig.update_layout(
@@ -891,7 +903,6 @@ def draw_professional_chart(hist):
 
     fig.update_xaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.16)", zeroline=False)
     fig.update_yaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.16)", zeroline=False)
-
     fig.update_yaxes(title_text="价格/净值", row=1, col=1)
     fig.update_yaxes(title_text="成交额/亿", row=2, col=1)
     fig.update_yaxes(title_text="强度", row=3, col=1)
@@ -905,12 +916,10 @@ def draw_professional_chart(hist):
 
 def build_market_table(spot_df, watch_codes):
     df = normalize_spot_columns(spot_df).copy()
-
     if df.empty or "代码" not in df.columns:
         return pd.DataFrame()
 
     df["代码"] = df["代码"].astype(str)
-
     if watch_codes:
         df = df[df["代码"].isin([str(x) for x in watch_codes])]
 
@@ -920,19 +929,17 @@ def build_market_table(spot_df, watch_codes):
 
     keep_cols = [c for c in ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额"] if c in df.columns]
     df = df[keep_cols].copy()
-
     if "成交额" in df.columns:
         df["成交额显示"] = df["成交额"].apply(format_money)
-
     return df
 
 
 # =========================
 # 页面标题
 # =========================
-st.markdown('<div class="main-title">📊 基金 / ETF 专业实时分析看板</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">基金 / ETF 专业实时分析看板</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="sub-title">东方财富直连 · 快速刷新 · 分模块基金池 · 用户代码自查 · 深色专业看盘界面</div>',
+    '<div class="sub-title">东方财富直连 · 快速刷新 · 分模块基金池 · 用户代码自查 · 赛博深色科技风界面</div>',
     unsafe_allow_html=True
 )
 
@@ -941,7 +948,7 @@ st.markdown(
 # 侧边栏
 # =========================
 with st.sidebar:
-    st.header("🎛️ 看板设置")
+    st.header("🛰️ 看板设置")
 
     module_name = st.selectbox(
         "选择基金模块",
@@ -972,24 +979,12 @@ with st.sidebar:
         selected_display_name = selected_name
         watch_codes = list(module_etfs.values())
 
-    days = st.slider(
-        "历史分析周期",
-        min_value=80,
-        max_value=520,
-        value=240,
-        step=20
-    )
+    days = st.slider("历史分析周期", min_value=80, max_value=520, value=240, step=20)
 
     st.divider()
 
     auto_refresh = st.checkbox("自动刷新", value=False)
-    refresh_seconds = st.slider(
-        "刷新间隔/秒",
-        min_value=30,
-        max_value=600,
-        value=90,
-        step=30
-    )
+    refresh_seconds = st.slider("刷新间隔/秒", min_value=30, max_value=600, value=90, step=30)
 
     st.divider()
 
@@ -1017,11 +1012,11 @@ try:
         st.stop()
 
     if "备用展示" in hist_source or "备用展示" in spot_source:
-        st.error("当前启用了备用展示数据：仅用于保证看板可打开，不是真实行情，不作为投资参考。")
+        st.markdown('<div class="status-banner-danger">当前启用了备用展示数据：仅用于保证看板可打开，不是真实行情，不作为投资参考。</div>', unsafe_allow_html=True)
     elif "缓存" in hist_source or "缓存" in spot_source:
-        st.warning("当前部分数据来自最近一次成功缓存，公开行情接口可能暂时不稳定。")
+        st.markdown('<div class="status-banner-warn">当前部分数据来自最近一次成功缓存，公开行情接口可能暂时不稳定。</div>', unsafe_allow_html=True)
     else:
-        st.success("当前数据源状态：东方财富真实行情接口正常。")
+        st.markdown('<div class="status-banner-ok">当前数据源状态：东方财富真实行情接口正常。</div>', unsafe_allow_html=True)
 
     summary = compute_summary(hist)
     latest = hist.iloc[-1]
@@ -1044,7 +1039,6 @@ try:
         today_amount = latest.get("成交额", np.nan)
 
     c1, c2, c3, c4, c5 = st.columns(5)
-
     c1.metric("基金/ETF", real_name)
     c2.metric("当前价/净值", f"{safe_num(latest_price):.3f}" if pd.notna(safe_num(latest_price)) else "暂无")
     c3.metric("今日涨跌幅", format_pct(today_pct))
@@ -1052,7 +1046,6 @@ try:
     c5.metric("资金信号", summary["money_label"])
 
     c6, c7, c8, c9, c10 = st.columns(5)
-
     c6.metric("趋势评分", f"{summary['trend_score']} / 5")
     c7.metric("趋势状态", summary["trend_label"])
     c8.metric("风险状态", summary["risk_label"])
@@ -1061,7 +1054,7 @@ try:
 
     st.markdown(
         f"""
-        <div class="panel-subtitle">
+        <div class="info-line">
         当前模块：{module_name}；数据状态：实时行情 = {spot_source}；历史行情 = {hist_source}；
         历史数据最后日期 = {latest['日期'].strftime('%Y-%m-%d') if pd.notna(latest['日期']) else '未知'}
         </div>
@@ -1071,7 +1064,7 @@ try:
 
     st.divider()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([" 看盘图", " 自动解读", " 模块行情池", " 信号明细", " 全模块速览"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["看盘图", "自动解读", "模块行情池", "信号明细", "全模块速览"])
 
     with tab1:
         st.markdown(
@@ -1093,7 +1086,7 @@ try:
             st.markdown(
                 f"""
                 <div class="signal-card">
-                    <div class="signal-title"> 自动分析结论</div>
+                    <div class="signal-title">自动分析结论</div>
                     <div class="signal-text">{summary["comment"].replace(chr(10), "<br>")}</div>
                 </div>
                 """,
@@ -1103,7 +1096,7 @@ try:
             st.markdown(
                 """
                 <div class="signal-card">
-                    <div class="signal-title"> 信号解释</div>
+                    <div class="signal-title">📌 信号解释</div>
                     <div class="signal-text">
                     <span class="good">强流入</span>：上涨幅度较大，同时成交额明显放大，OBV强于短期均值。<br>
                     <span class="bad">强撤出</span>：下跌幅度较大，同时成交额明显放大，OBV弱于短期均值。<br>
@@ -1119,17 +1112,8 @@ try:
             st.subheader("关键位置")
             key_df = pd.DataFrame({
                 "指标": [
-                    "收盘价/净值",
-                    "MA5",
-                    "MA20",
-                    "MA60",
-                    "相对MA5偏离",
-                    "相对MA20偏离",
-                    "相对MA60偏离",
-                    "成交额",
-                    "成交额MA20",
-                    "量能倍率",
-                    "资金行为强度"
+                    "收盘价/净值", "MA5", "MA20", "MA60", "相对MA5偏离", "相对MA20偏离",
+                    "相对MA60偏离", "成交额", "成交额MA20", "量能倍率", "资金行为强度"
                 ],
                 "数值": [
                     f"{latest['收盘']:.4f}",
@@ -1149,20 +1133,14 @@ try:
 
     with tab3:
         market_table = build_market_table(spot_df, watch_codes)
-
         if market_table.empty:
-            st.warning("暂未获取到实时行情表。")
+            st.warning("暂未获取到模块行情表。")
         else:
             if "涨跌幅" in market_table.columns:
                 market_table = market_table.sort_values("涨跌幅", ascending=False)
 
             st.subheader(f"{module_name} 模块实时强弱排名")
-            st.dataframe(
-                market_table,
-                use_container_width=True,
-                height=520,
-                hide_index=True
-            )
+            st.dataframe(market_table, use_container_width=True, height=520, hide_index=True)
 
             if "涨跌幅" in market_table.columns and len(market_table) >= 2:
                 best = market_table.iloc[0]
@@ -1188,24 +1166,14 @@ try:
         signal_df["均线偏离_MA60"] = signal_df["均线偏离_MA60"].map(format_pct)
 
         st.subheader("历史资金行为信号明细")
-        st.dataframe(
-            signal_df.sort_values("日期", ascending=False),
-            use_container_width=True,
-            height=520,
-            hide_index=True
-        )
-
+        st.dataframe(signal_df.sort_values("日期", ascending=False), use_container_width=True, height=520, hide_index=True)
 
     with tab5:
         st.subheader("全模块基金池")
         module_rows = []
         for mod, items in ETF_MODULES.items():
             for name, code in items.items():
-                module_rows.append({
-                    "模块": mod,
-                    "名称": name,
-                    "代码": code
-                })
+                module_rows.append({"模块": mod, "名称": name, "代码": code})
         module_df = pd.DataFrame(module_rows)
         st.dataframe(module_df, use_container_width=True, height=560, hide_index=True)
         st.info("如果这里没有你要看的基金，打开左侧“用户自查”，输入6位基金/ETF代码即可。")
