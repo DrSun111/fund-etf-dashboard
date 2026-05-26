@@ -885,7 +885,7 @@ try:
 
     st.divider()
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 专业分析图", "🧠 自动解读", "🔥 实时行情池", "📋 信号明细"])
+    tab1, tab2, tab3, tab4 = st.tabs(["专业分析图", "自动解读", "实时行情池", "信号明细"])
 
     with tab1:
         fig = draw_professional_chart(
