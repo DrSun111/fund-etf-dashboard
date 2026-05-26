@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FundPilot Pro | 基金智能驾驶舱
+FundPilot Pro | 基金智能分析平台
 
 运行方式:
     streamlit run fundpilot_pro.py
@@ -67,7 +67,7 @@ CHART_CONFIG = {
         "scale": 2,
     },
 }
-DATA_MODE_OPTIONS = ["东方财富实时行情 + 日线兜底", "东方财富日线 + 演示兜底", "仅演示行情"]
+DATA_MODE_OPTIONS = ["东方财富实时行情 + 日线兜底", "仅演示行情"]
 REFRESH_OPTIONS = ["实时 15秒", "30秒", "1分钟", "5分钟", "15分钟", "30分钟", "60分钟", "手动刷新"]
 
 
@@ -274,7 +274,7 @@ def rerun_app() -> None:
 
 def apply_page_config() -> None:
     st.set_page_config(
-        page_title="FundPilot Pro | 基金智能驾驶舱",
+        page_title="FundPilot Pro | 基金智能分析平台",
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -285,6 +285,28 @@ def inject_css() -> None:
     st.markdown(
         """
         <style>
+        html, body, #root, .stApp,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        section.main {
+            background:
+                radial-gradient(circle at 12% 0%, rgba(88, 213, 255, 0.12), transparent 30%),
+                linear-gradient(135deg, #07111F 0%, #0B1A2F 48%, #101B2D 100%) !important;
+        }
+        [data-testid="stHeader"] {
+            background: rgba(7, 17, 31, 0.92) !important;
+            border-bottom: 1px solid rgba(124, 214, 255, 0.16) !important;
+            height: 0rem !important;
+        }
+        [data-testid="stToolbar"], [data-testid="stDecoration"], footer {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+        }
+        .block-container {
+            padding-top: 0.65rem !important;
+        }
+
         :root {
             --bg: #07111F;
             --bg2: #0B1A2F;
@@ -569,7 +591,7 @@ def init_state() -> None:
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
-    if st.session_state.get("data_mode") == "东方财富优先 + 演示兜底":
+    if st.session_state.get("data_mode") in {"东方财富优先 + 演示兜底", "东方财富日线 + 演示兜底", "东方财富日线行情 + 净值兜底"}:
         st.session_state["data_mode"] = "东方财富实时行情 + 日线兜底"
     if st.session_state.get("data_mode") not in DATA_MODE_OPTIONS:
         st.session_state["data_mode"] = "东方财富实时行情 + 日线兜底"
@@ -683,7 +705,7 @@ def render_hero() -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>{APP_NAME}｜基金智能驾驶舱</h1>
+            <h1>{APP_NAME}｜基金智能分析平台</h1>
             <p>{APP_SUBTITLE}</p>
         </div>
         """,
@@ -818,7 +840,7 @@ def search_funds(query: str, catalog: Optional[pd.DataFrame] = None, limit: int 
     return result.head(limit)
 
 
-@st.cache_data(ttl=10 * 60, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def fetch_etf_kline(code: str, days: int = 420) -> pd.DataFrame:
     code = normalize_code(code)
     end = datetime.today().strftime("%Y%m%d")
@@ -832,6 +854,7 @@ def fetch_etf_kline(code: str, days: int = 420) -> pd.DataFrame:
         "fqt": "1",
         "beg": beg,
         "end": end,
+        "_": int(time.time() * 1000),
     }
     headers = {"User-Agent": "Mozilla/5.0"}
     resp = requests.get(url, params=params, headers=headers, timeout=8)
@@ -865,7 +888,7 @@ def fetch_etf_kline(code: str, days: int = 420) -> pd.DataFrame:
     return df.dropna(subset=["date", "close"]).tail(days).reset_index(drop=True)
 
 
-@st.cache_data(ttl=30 * 60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_fund_nav(code: str, days: int = 420) -> pd.DataFrame:
     code = normalize_code(code)
     url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
@@ -910,7 +933,7 @@ def fetch_fund_nav(code: str, days: int = 420) -> pd.DataFrame:
     return df.dropna(subset=["date", "close"]).tail(days).reset_index(drop=True)
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def fetch_realtime_quote(code: str) -> Dict[str, Any]:
     code = normalize_code(code)
     if infer_market(code) not in {"SH", "SZ"}:
@@ -977,7 +1000,9 @@ def parse_quote_time(data: Dict[str, Any]) -> pd.Timestamp:
 
 
 def apply_realtime_quote(df: pd.DataFrame, code: str, data_mode: str = "") -> pd.DataFrame:
-    if "实时" not in data_mode or "仅演示" in data_mode:
+    # 只要不是演示模式，就强制接入东方财富实时快照。
+    # 这样日线接口停留在上一交易日时，也能用盘中实时价更新最后一行。
+    if "仅演示" in data_mode:
         return df
     try:
         quote = fetch_realtime_quote(code)
@@ -1076,7 +1101,7 @@ def synthetic_history(code: str, days: int = 420) -> pd.DataFrame:
     )
 
 
-@st.cache_data(ttl=10 * 60, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_price_history(code: str, days: int = 420, data_mode: str = "") -> pd.DataFrame:
     code = normalize_code(code)
     if "仅演示" not in data_mode:
@@ -1204,7 +1229,7 @@ def action_label(row: pd.Series) -> str:
     return "趋势破位谨慎" if trend <= 1 else "继续观察"
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def analyze_fund_cached(code: str, data_mode: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:
     code = normalize_code(code)
     raw = load_price_history(code, 420, data_mode)
@@ -1765,7 +1790,7 @@ def generate_alerts(pos_df: pd.DataFrame, catalog: pd.DataFrame) -> Dict[str, Li
 def render_sidebar(catalog: pd.DataFrame) -> str:
     with st.sidebar:
         st.markdown(f"### {APP_NAME}")
-        st.caption("基金智能驾驶舱")
+        st.caption("基金智能分析平台")
         query = st.text_input("全局搜索", placeholder="输入基金代码、名称、模块或关键词")
         if query:
             results = search_funds(query, catalog, limit=5)
