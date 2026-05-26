@@ -294,11 +294,13 @@ def inject_css() -> None:
                 linear-gradient(135deg, #07111F 0%, #0B1A2F 48%, #101B2D 100%) !important;
         }
         [data-testid="stHeader"] {
-            background: rgba(7, 17, 31, 0.92) !important;
-            border-bottom: 1px solid rgba(124, 214, 255, 0.16) !important;
-            height: 0rem !important;
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            background: transparent !important;
         }
-        [data-testid="stToolbar"], [data-testid="stDecoration"], footer {
+        [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stStatusWidget"], header, footer {
             display: none !important;
             visibility: hidden !important;
             height: 0 !important;
@@ -933,27 +935,85 @@ def fetch_fund_nav(code: str, days: int = 420) -> pd.DataFrame:
     return df.dropna(subset=["date", "close"]).tail(days).reset_index(drop=True)
 
 
-@st.cache_data(ttl=5, show_spinner=False)
+@st.cache_data(ttl=3, show_spinner=False)
 def fetch_realtime_quote(code: str) -> Dict[str, Any]:
+    """
+    交易所基金实时快照。
+    只用于 SH/SZ 场内基金、ETF、LOF。场外基金净值没有真正盘中实时价。
+    """
     code = normalize_code(code)
     if infer_market(code) not in {"SH", "SZ"}:
-        raise ValueError("realtime quote only supports exchange traded funds")
-    url = "https://push2.eastmoney.com/api/qt/stock/get"
-    params = {
-        "secid": secid_for_code(code),
-        "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f86,f124,f168,f169,f170,f171",
-        "_": int(time.time() * 1000),
-    }
+        raise ValueError("该代码不是SH/SZ场内品种，无法获取盘中实时快照")
+
     headers = {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
         "Referer": "https://quote.eastmoney.com/",
+        "Accept": "application/json,text/plain,*/*",
     }
-    resp = requests.get(url, params=params, headers=headers, timeout=6)
-    resp.raise_for_status()
-    data = resp.json().get("data") or {}
-    if not data or safe_float(data.get("f43")) <= 0:
-        raise ValueError("empty realtime quote")
-    return data
+
+    errors = []
+
+    # 方案1：单证券实时快照
+    try:
+        url = "https://push2.eastmoney.com/api/qt/stock/get"
+        params = {
+            "secid": secid_for_code(code),
+            "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f86,f124,f168,f169,f170,f171",
+            "_": int(time.time() * 1000),
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=5)
+        resp.raise_for_status()
+        data = resp.json().get("data") or {}
+        if data and safe_float(data.get("f43"), np.nan) > 0:
+            data["_realtime_fetch_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            data["_realtime_api"] = "qt/stock/get"
+            return data
+        errors.append("qt/stock/get返回为空或价格无效")
+    except Exception as exc:
+        errors.append(f"qt/stock/get失败：{exc}")
+
+    # 方案2：列表实时快照备用
+    try:
+        url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+        params = {
+            "fltt": "2",
+            "secids": secid_for_code(code),
+            "fields": "f12,f14,f2,f3,f4,f5,f6,f15,f16,f17,f18,f124",
+            "_": int(time.time() * 1000),
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=5)
+        resp.raise_for_status()
+        diff = (resp.json().get("data") or {}).get("diff") or []
+        if diff:
+            item = diff[0]
+            # 统一映射到 stock/get 的字段名，便于下游函数复用
+            data = {
+                "f43": item.get("f2"),
+                "f44": item.get("f15"),
+                "f45": item.get("f16"),
+                "f46": item.get("f17"),
+                "f47": item.get("f5"),
+                "f48": item.get("f6"),
+                "f57": item.get("f12"),
+                "f58": item.get("f14"),
+                "f60": item.get("f18"),
+                "f124": item.get("f124"),
+                "f170": item.get("f3"),
+                "f169": item.get("f4"),
+                "_realtime_fetch_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "_realtime_api": "qt/ulist.np/get",
+            }
+            if safe_float(data.get("f43"), np.nan) > 0:
+                return data
+        errors.append("qt/ulist.np/get返回为空或价格无效")
+    except Exception as exc:
+        errors.append(f"qt/ulist.np/get失败：{exc}")
+
+    raise ValueError("；".join(errors))
 
 
 def normalize_quote_price(value: Any, reference: float = np.nan) -> float:
@@ -1000,24 +1060,36 @@ def parse_quote_time(data: Dict[str, Any]) -> pd.Timestamp:
 
 
 def apply_realtime_quote(df: pd.DataFrame, code: str, data_mode: str = "") -> pd.DataFrame:
-    # 只要不是演示模式，就强制接入东方财富实时快照。
-    # 这样日线接口停留在上一交易日时，也能用盘中实时价更新最后一行。
-    if "仅演示" in data_mode:
-        return df
+    """
+    将东方财富实时快照合并到历史日线末端。
+    修正点：如果实时接口成功，不再只依赖日线日期，而是用页面实际获取时间追加/替换最后一行，避免界面一直停在旧日线日期。
+    """
+    out = df.copy().sort_values("date").reset_index(drop=True)
+    if out.empty or "仅演示" in data_mode:
+        return out
+
+    if infer_market(code) not in {"SH", "SZ"}:
+        if not out.empty:
+            out.at[out.index[-1], "source"] = str(out.iloc[-1].get("source", "")) + "；场外基金无盘中实时快照"
+        return out
+
     try:
         quote = fetch_realtime_quote(code)
-    except Exception:
-        return df
-    out = df.copy().sort_values("date").reset_index(drop=True)
-    if out.empty:
+    except Exception as exc:
+        if not out.empty:
+            out.at[out.index[-1], "source"] = f"实时接口失败，使用历史日线；错误：{exc}"
         return out
+
     ref_close = safe_float(out.iloc[-1].get("close"), np.nan)
     prev_close = normalize_quote_price(quote.get("f60"), ref_close)
     if pd.isna(prev_close):
         prev_close = ref_close
+
     price = normalize_quote_price(quote.get("f43"), prev_close)
     if pd.isna(price) or price <= 0:
+        out.at[out.index[-1], "source"] = "实时接口返回价格无效，使用历史日线"
         return out
+
     open_price = normalize_quote_price(quote.get("f46"), prev_close)
     high_price = normalize_quote_price(quote.get("f44"), price)
     low_price = normalize_quote_price(quote.get("f45"), price)
@@ -1026,31 +1098,41 @@ def apply_realtime_quote(df: pd.DataFrame, code: str, data_mode: str = "") -> pd
     volume = safe_float(quote.get("f47"), np.nan)
     if pd.isna(volume) or volume <= 0:
         volume = amount / price if price > 0 else 0
-    quote_time = parse_quote_time(quote)
-    source = f"东方财富实时行情 · {quote_time.strftime('%Y-%m-%d %H:%M:%S')}"
+
+    api_time = parse_quote_time(quote)
+    fetch_time_text = quote.get("_realtime_fetch_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    fetch_time = pd.Timestamp(fetch_time_text)
+    api_name = quote.get("_realtime_api", "东方财富实时接口")
+
+    high_candidates = [v for v in [high_price, price, open_price, prev_close] if pd.notna(v)]
+    low_candidates = [v for v in [low_price, price, open_price, prev_close] if pd.notna(v)]
+
     realtime_row = {
-        "date": quote_time,
+        "date": fetch_time,
         "open": open_price if pd.notna(open_price) else prev_close,
         "close": price,
-        "high": max([v for v in [high_price, price, open_price] if pd.notna(v)]),
-        "low": min([v for v in [low_price, price, open_price] if pd.notna(v)]),
+        "high": max(high_candidates) if high_candidates else price,
+        "low": min(low_candidates) if low_candidates else price,
         "volume": volume,
         "amount": amount,
-        "amplitude": ((high_price - low_price) / prev_close * 100) if pd.notna(high_price) and pd.notna(low_price) and prev_close > 0 else np.nan,
+        "amplitude": ((max(high_candidates) - min(low_candidates)) / prev_close * 100) if high_candidates and low_candidates and pd.notna(prev_close) and prev_close > 0 else np.nan,
         "pct_change": pct_change,
         "change": price - prev_close if pd.notna(prev_close) else np.nan,
         "turnover": safe_float(quote.get("f168"), np.nan),
-        "source": source,
+        "source": f"东方财富实时价格快照 · 获取时间 {fetch_time_text} · API时间 {api_time.strftime('%Y-%m-%d %H:%M:%S')} · {api_name}",
     }
     if "fund_name_remote" in out.columns:
         realtime_row["fund_name_remote"] = str(quote.get("f58") or out.iloc[-1].get("fund_name_remote", ""))
-    quote_day = quote_time.normalize()
+
+    # 如果同一天，替换末行；如果历史日线停留在旧交易日，追加一个实时快照行。
     last_day = pd.Timestamp(out.iloc[-1]["date"]).normalize()
-    if last_day == quote_day:
+    fetch_day = fetch_time.normalize()
+    if last_day == fetch_day:
         for key, value in realtime_row.items():
             out.at[out.index[-1], key] = value
     else:
         out = pd.concat([out, pd.DataFrame([realtime_row])], ignore_index=True)
+
     return out.sort_values("date").reset_index(drop=True)
 
 
