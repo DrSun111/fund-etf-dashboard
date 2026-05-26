@@ -3,3 +3,4 @@ akshare
 numpy
 pandas
 plotly
+requests
