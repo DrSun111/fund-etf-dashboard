@@ -6,6 +6,7 @@ import akshare as ak
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -153,7 +154,7 @@ def format_pct(x):
 
 
 # =========================
-# 稳定性增强：重试 + 本地缓存
+# 下午备用方案：真实接口失败时仍可看板展示
 # =========================
 CACHE_DIR = Path(".etf_cache")
 CACHE_DIR.mkdir(exist_ok=True)
@@ -167,10 +168,6 @@ def history_cache_file(symbol: str) -> Path:
 
 
 def save_df_cache(df: pd.DataFrame, file_path: Path):
-    """
-    保存最近一次成功获取的数据。
-    Streamlit Cloud 的磁盘缓存不保证永久存在，但可用于当前运行周期内兜底。
-    """
     try:
         if df is not None and not df.empty:
             df.to_csv(file_path, index=False, encoding="utf-8-sig")
@@ -188,9 +185,6 @@ def load_df_cache(file_path: Path) -> pd.DataFrame:
 
 
 def run_with_retry(fetch_func, retry=3, sleep_seconds=2):
-    """
-    对 AkShare 请求做轻量重试，避免偶发 RemoteDisconnected 直接导致页面红屏。
-    """
     last_error = None
     for _ in range(retry):
         try:
@@ -203,41 +197,293 @@ def run_with_retry(fetch_func, retry=3, sleep_seconds=2):
     return pd.DataFrame(), last_error
 
 
+def get_base_price(symbol: str) -> float:
+    """
+    备用展示数据的近似价格中枢。
+    只用于接口失败时保持看板可打开，不作为真实行情。
+    """
+    base_price_map = {
+        "510300": 3.8,     # 沪深300ETF
+        "159915": 1.8,     # 创业板ETF
+        "588000": 0.9,     # 科创50ETF
+        "512480": 0.8,     # 半导体ETF
+        "159995": 0.9,     # 芯片ETF
+        "512880": 0.9,     # 证券ETF
+        "512010": 0.45,    # 医药ETF
+        "515030": 1.1,     # 新能源车ETF
+        "515790": 0.75,    # 光伏ETF
+        "512400": 1.2,     # 有色金属ETF
+        "512660": 1.0,     # 军工ETF
+        "513130": 0.55,    # 恒生科技ETF
+        "513100": 1.6,     # 纳指ETF
+        "518880": 5.2,     # 黄金ETF
+    }
+    return base_price_map.get(str(symbol), 1.0)
+
+
+def get_sec_id(symbol: str) -> str:
+    """
+    东方财富接口使用的 secid：
+    上海市场通常为 1.xxxxxx，深圳市场通常为 0.xxxxxx。
+    ETF代码以 5 开头多为上海；以 1 开头多为深圳。
+    """
+    symbol = str(symbol).strip()
+    if symbol.startswith(("5", "6", "9")):
+        return f"1.{symbol}"
+    return f"0.{symbol}"
+
+
+def request_json(url: str, params: dict, retry: int = 3, timeout: int = 12):
+    """
+    备用接口请求函数。
+    加 User-Agent 和 Referer，减少云端请求被直接断开的概率。
+    """
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": "https://quote.eastmoney.com/"
+    }
+
+    last_error = None
+    for _ in range(retry):
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=timeout)
+            response.raise_for_status()
+            return response.json(), None
+        except Exception as e:
+            last_error = e
+            time.sleep(1.5)
+
+    return None, last_error
+
+
+def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
+    """
+    备用真实接口：东方财富日K历史行情。
+    当 AkShare 封装接口失败时，直接请求东方财富公开行情接口。
+    """
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    params = {
+        "secid": get_sec_id(symbol),
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",     # 日K
+        "fqt": "0",       # 不复权
+        "beg": "20000101",
+        "end": dt.datetime.now().strftime("%Y%m%d"),
+        "lmt": str(max(days * 2, 600))
+    }
+
+    data, error = request_json(url, params=params, retry=3, timeout=12)
+    if not data:
+        raise RuntimeError(f"东方财富历史行情备用接口失败：{error}")
+
+    klines = data.get("data", {}).get("klines", [])
+    if not klines:
+        raise RuntimeError("东方财富历史行情备用接口返回为空")
+
+    rows = []
+    for line in klines:
+        parts = line.split(",")
+        if len(parts) < 7:
+            continue
+        rows.append({
+            "日期": parts[0],
+            "开盘": parts[1],
+            "收盘": parts[2],
+            "最高": parts[3],
+            "最低": parts[4],
+            "成交量": parts[5],
+            "成交额": parts[6],
+            "涨跌幅": parts[8] if len(parts) > 8 else np.nan,
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise RuntimeError("东方财富历史行情备用接口解析后为空")
+
+    df["日期"] = pd.to_datetime(df["日期"])
+    numeric_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.sort_values("日期").reset_index(drop=True)
+    return df.tail(days).reset_index(drop=True)
+
+
+def fetch_spot_from_eastmoney(codes) -> pd.DataFrame:
+    """
+    备用真实接口：东方财富实时行情。
+    用于关注 ETF 池实时强弱排名。
+    """
+    secids = ",".join([get_sec_id(code) for code in codes])
+
+    url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+    params = {
+        "fltt": "2",
+        "secids": secids,
+        "fields": "f12,f14,f2,f3,f4,f5,f6"
+    }
+
+    data, error = request_json(url, params=params, retry=3, timeout=12)
+    if not data:
+        raise RuntimeError(f"东方财富实时行情备用接口失败：{error}")
+
+    diff = data.get("data", {}).get("diff", [])
+    if not diff:
+        raise RuntimeError("东方财富实时行情备用接口返回为空")
+
+    rows = []
+    for item in diff:
+        rows.append({
+            "代码": str(item.get("f12", "")),
+            "名称": item.get("f14", ""),
+            "最新价": item.get("f2", np.nan),
+            "涨跌幅": item.get("f3", np.nan),
+            "涨跌额": item.get("f4", np.nan),
+            "成交量": item.get("f5", np.nan),
+            "成交额": item.get("f6", np.nan),
+        })
+
+    df = pd.DataFrame(rows)
+    for col in ["最新价", "涨跌幅", "涨跌额", "成交量", "成交额"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+
+def generate_fallback_history(symbol: str, days: int = 240) -> pd.DataFrame:
+    """
+    最终兜底数据。
+    当 Streamlit Cloud 下午无法连接国内公开行情接口时，生成一份可视化备用数据。
+    该数据只用于保持页面展示和功能演示，不是真实行情，不作为投资参考。
+    """
+    seed = abs(hash(str(symbol))) % (2**32)
+    rng = np.random.default_rng(seed)
+
+    end_date = pd.Timestamp.today().normalize()
+    dates = pd.bdate_range(end=end_date, periods=days)
+
+    base_price = get_base_price(symbol)
+
+    # 生成轻微趋势 + 波动，避免完全随机跳动
+    drift = rng.normal(0.00015, 0.00015)
+    returns = rng.normal(loc=drift, scale=0.014, size=len(dates))
+    trend = np.linspace(-0.03, 0.05, len(dates))
+    prices = base_price * np.cumprod(1 + returns) * (1 + trend)
+
+    open_prices = prices * (1 + rng.normal(0, 0.004, len(dates)))
+    high_prices = np.maximum(open_prices, prices) * (1 + rng.uniform(0.002, 0.018, len(dates)))
+    low_prices = np.minimum(open_prices, prices) * (1 - rng.uniform(0.002, 0.018, len(dates)))
+
+    amount = rng.uniform(1.2e8, 16e8, len(dates))
+    volume = amount / np.maximum(prices, 0.01) / 100
+
+    df = pd.DataFrame({
+        "日期": dates,
+        "开盘": open_prices,
+        "收盘": prices,
+        "最高": high_prices,
+        "最低": low_prices,
+        "成交量": volume,
+        "成交额": amount,
+    })
+
+    df["涨跌幅"] = df["收盘"].pct_change() * 100
+    df["涨跌幅"] = df["涨跌幅"].fillna(0)
+
+    return df
+
+
+def generate_fallback_spot() -> pd.DataFrame:
+    """
+    生成关注池备用实时表，保证“实时行情池”标签页下午也能打开。
+    """
+    rows = []
+    today_seed = int(pd.Timestamp.today().strftime("%Y%m%d"))
+    rng = np.random.default_rng(today_seed)
+
+    for name, code in DEFAULT_ETFS.items():
+        base = get_base_price(code)
+        pct = rng.normal(0, 1.2)
+        latest = base * (1 + pct / 100)
+        amount = rng.uniform(1e8, 20e8)
+        rows.append({
+            "代码": code,
+            "名称": name,
+            "最新价": round(latest, 3),
+            "涨跌幅": round(pct, 2),
+            "涨跌额": round(latest - base, 3),
+            "成交额": amount
+        })
+
+    return pd.DataFrame(rows)
+
+
 @st.cache_data(ttl=45)
 def get_etf_spot():
     """
     ETF实时行情。
-    上午原逻辑基础上增加：失败重试 + 最近一次成功数据缓存兜底。
+    数据源顺序：
+    1. AkShare真实接口；
+    2. 东方财富备用真实接口；
+    3. 最近一次成功缓存；
+    4. 下午备用展示表。
     """
-    def fetch():
+    def fetch_akshare():
         return ak.fund_etf_spot_em()
 
-    df, error = run_with_retry(fetch, retry=3, sleep_seconds=2)
-
+    # 第一层：AkShare
+    df, error_ak = run_with_retry(fetch_akshare, retry=3, sleep_seconds=2)
     if df is not None and not df.empty:
         save_df_cache(df, SPOT_CACHE_FILE)
+        st.session_state["data_mode_spot"] = "AkShare真实实时行情"
         return df
 
+    # 第二层：东方财富备用真实接口
+    try:
+        df = fetch_spot_from_eastmoney(list(DEFAULT_ETFS.values()))
+        if df is not None and not df.empty:
+            save_df_cache(df, SPOT_CACHE_FILE)
+            st.session_state["data_mode_spot"] = "东方财富备用实时行情"
+            st.warning("AkShare 实时行情暂时不可用，已切换到东方财富备用实时接口。")
+            return df
+    except Exception as error_em:
+        pass
+
+    # 第三层：缓存
     cached = load_df_cache(SPOT_CACHE_FILE)
     if not cached.empty:
         st.warning("实时行情接口暂时不稳定，当前使用最近一次成功缓存数据。")
+        st.session_state["data_mode_spot"] = "缓存实时行情"
         return cached
 
-    st.warning(f"实时行情暂时获取失败，请稍后刷新。错误信息：{error}")
-    return pd.DataFrame()
+    # 第四层：备用展示
+    st.warning(f"实时行情接口暂时不可用，已启用下午备用展示表。AkShare错误：{error_ak}")
+    st.session_state["data_mode_spot"] = "下午备用展示数据"
+    return generate_fallback_spot()
 
 
 @st.cache_data(ttl=180)
 def get_etf_history(symbol: str, days: int = 240):
     """
     ETF历史行情，用于均线、成交额、资金行为代理指标分析。
-    上午原逻辑基础上增加：失败重试 + 最近一次成功历史数据缓存兜底。
+    数据源顺序：
+    1. AkShare真实接口；
+    2. 东方财富备用真实接口；
+    3. 最近一次成功缓存；
+    4. 下午备用展示数据。
     """
     end_date = dt.datetime.now().strftime("%Y%m%d")
     start_date = (dt.datetime.now() - dt.timedelta(days=days * 2)).strftime("%Y%m%d")
     cache_file = history_cache_file(symbol)
 
-    def fetch():
+    def fetch_akshare():
         return ak.fund_etf_hist_em(
             symbol=str(symbol),
             period="daily",
@@ -246,18 +492,39 @@ def get_etf_history(symbol: str, days: int = 240):
             adjust=""
         )
 
-    df, error = run_with_retry(fetch, retry=3, sleep_seconds=2)
+    # 第一层：AkShare
+    df, error_ak = run_with_retry(fetch_akshare, retry=3, sleep_seconds=2)
 
     if df is not None and not df.empty:
         save_df_cache(df, cache_file)
+        data_mode = "AkShare真实历史行情"
     else:
-        cached = load_df_cache(cache_file)
-        if not cached.empty:
-            st.warning("历史行情接口暂时不稳定，当前使用最近一次成功缓存数据。")
-            df = cached
-        else:
-            st.warning(f"历史行情暂时获取失败，请稍后刷新。错误信息：{error}")
-            return pd.DataFrame()
+        # 第二层：东方财富备用真实接口
+        try:
+            df = fetch_history_from_eastmoney(symbol, days)
+            if df is not None and not df.empty:
+                save_df_cache(df, cache_file)
+                data_mode = "东方财富备用历史行情"
+                st.warning("AkShare 历史行情暂时不可用，已切换到东方财富备用历史接口。")
+            else:
+                raise RuntimeError("东方财富备用历史接口返回为空")
+        except Exception as error_em:
+            # 第三层：缓存
+            cached = load_df_cache(cache_file)
+            if not cached.empty:
+                st.warning("历史行情接口暂时不稳定，当前使用最近一次成功缓存数据。")
+                df = cached
+                data_mode = "缓存历史行情"
+            else:
+                # 第四层：备用展示
+                st.warning(
+                    f"真实历史行情接口暂时不可用，已启用下午备用展示数据。"
+                    f"AkShare错误：{error_ak}；东方财富错误：{error_em}"
+                )
+                df = generate_fallback_history(symbol, days)
+                data_mode = "下午备用展示数据"
+
+    st.session_state["data_mode_hist"] = data_mode
 
     df["日期"] = pd.to_datetime(df["日期"])
     df = df.sort_values("日期").reset_index(drop=True)
@@ -825,6 +1092,11 @@ with st.sidebar:
         st.rerun()
 
     st.caption(
+        "备用方案：AkShare失败时优先切换东方财富备用真实接口；若真实接口全部失败，看板会自动启用备用展示数据，"
+        "用于保证页面和APK可打开；备用数据不是真实行情，不作为投资参考。"
+    )
+
+    st.caption(
         "说明：公开数据接口无法等同于券商Level-2逐笔主力数据。"
         "本看板使用成交额、涨跌幅、OBV和均线结构构建资金行为代理信号。"
     )
@@ -880,6 +1152,18 @@ try:
     c8.metric("风险状态", summary["risk_label"])
     c9.metric("量能倍率", f"{latest['量能倍率']:.2f}x" if pd.notna(latest["量能倍率"]) else "暂无")
     c10.metric("策略提示", summary["action_label"])
+
+    spot_mode = st.session_state.get("data_mode_spot", "未知")
+    hist_mode = st.session_state.get("data_mode_hist", "未知")
+
+    if "备用" in hist_mode or "备用" in spot_mode:
+        st.error("当前启用了下午备用展示数据：仅用于保证看板可打开和功能演示，不是真实行情，不作为投资参考。")
+    elif "缓存" in hist_mode or "缓存" in spot_mode:
+        st.warning("当前部分数据来自最近一次成功缓存，公开行情源可能暂时不稳定。")
+    else:
+        st.success("当前数据源状态：真实行情接口正常。")
+
+    st.caption(f"数据状态：实时行情 = {spot_mode}；历史行情 = {hist_mode}")
 
     st.divider()
 
