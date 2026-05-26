@@ -1,1003 +1,2206 @@
-import datetime as dt
-import importlib.util
+# -*- coding: utf-8 -*-
+"""
+FundPilot Pro | 基金智能驾驶舱
+
+运行方式:
+    streamlit run fundpilot_pro.py
+
+依赖建议:
+    streamlit pandas numpy plotly requests openpyxl
+
+说明:
+    1. 优先使用东方财富公开行情接口获取 ETF/LOF K 线与部分场外基金净值。
+    2. 当网络、接口或代码类型不可用时，自动生成稳定的演示行情，保证界面可预览。
+    3. 本原型聚焦产品闭环: 实仓导入、模块行情、趋势风控、搜索、自定义模块、专业解读。
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import math
 import re
 import time
-from pathlib import Path
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
-from PIL import Image
-import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-st.set_page_config(
-    page_title="基金/ETF实时分析看板",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
+APP_NAME = "FundPilot Pro"
+APP_SUBTITLE = "实仓导入 · 模块轮动 · 趋势风控 · AI专业解读 · 自定义基金搜索"
+
+THEME = {
+    "bg": "#050816",
+    "bg2": "#071126",
+    "panel": "#0B1020",
+    "panel2": "#111827",
+    "border": "rgba(88, 213, 255, 0.26)",
+    "text": "#F8FAFC",
+    "muted": "#A8B7CF",
+    "blue": "#58D5FF",
+    "green": "#22C55E",
+    "red": "#EF4444",
+    "yellow": "#FBBF24",
+    "purple": "#A78BFA",
+}
+
+PLOTLY_TEMPLATE = "plotly_dark"
+
+
+MODULE_TAXONOMY: Dict[str, List[str]] = {
+    "宽基指数": ["沪深300", "中证500", "中证1000", "上证50", "创业板", "科创50", "双创50", "红利指数", "央企指数"],
+    "科技成长": ["人工智能", "云计算", "软件", "通信", "5G", "机器人", "智能车", "数字经济", "信创", "数据中心"],
+    "人工智能与数字经济": ["人工智能", "数字经济", "云计算", "软件", "数据中心", "信创", "传媒游戏", "算力"],
+    "半导体与芯片": ["半导体", "芯片", "集成电路", "电子", "消费电子", "科创芯片"],
+    "电气电力与新能源": ["新能源车", "光伏", "电池", "储能", "绿色电力", "电力", "新能源", "碳中和", "风电", "核电", "智能电网"],
+    "资源周期与大宗商品": ["有色金属", "稀土", "钢铁", "煤炭", "能源", "化工", "石油", "黄金", "豆粕", "农业资源"],
+    "金融地产": ["证券", "银行", "保险", "金融", "地产", "基建", "央企金融"],
+    "消费医药农业": ["消费", "酒", "食品饮料", "医药", "医疗", "创新药", "中药", "养殖", "农业"],
+    "港股与海外": ["恒生科技", "恒生互联网", "港股通互联网", "恒生指数", "纳斯达克", "标普500", "德国", "日经", "印度", "越南"],
+    "债券与货币": ["短债", "中短债", "纯债", "可转债", "货币基金", "同业存单", "政金债", "国债"],
+    "商品与避险资产": ["黄金", "豆粕", "能源", "原油", "有色", "大宗商品"],
+    "红利与低波动": ["红利指数", "红利低波", "央企红利", "高股息", "低波动"],
+}
+
+
+FUND_SEEDS: List[Dict[str, Any]] = [
+    # 宽基指数
+    {"fund_code": "510300", "fund_name": "沪深300ETF", "module_level_1": "宽基指数", "module_level_2": "沪深300", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "510500", "fund_name": "中证500ETF", "module_level_1": "宽基指数", "module_level_2": "中证500", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "512100", "fund_name": "中证1000ETF", "module_level_1": "宽基指数", "module_level_2": "中证1000", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "510050", "fund_name": "上证50ETF", "module_level_1": "宽基指数", "module_level_2": "上证50", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "159915", "fund_name": "创业板ETF", "module_level_1": "宽基指数", "module_level_2": "创业板", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "588000", "fund_name": "科创50ETF", "module_level_1": "宽基指数", "module_level_2": "科创50", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159781", "fund_name": "双创50ETF", "module_level_1": "宽基指数", "module_level_2": "双创50", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "510880", "fund_name": "红利ETF", "module_level_1": "宽基指数", "module_level_2": "红利指数", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "512950", "fund_name": "央企改革ETF", "module_level_1": "宽基指数", "module_level_2": "央企指数", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    # 科技成长 / AI
+    {"fund_code": "515070", "fund_name": "人工智能AIETF", "module_level_1": "科技成长", "module_level_2": "人工智能", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159819", "fund_name": "人工智能ETF", "module_level_1": "人工智能与数字经济", "module_level_2": "人工智能", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "516510", "fund_name": "云计算ETF", "module_level_1": "科技成长", "module_level_2": "云计算", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515230", "fund_name": "软件ETF", "module_level_1": "科技成长", "module_level_2": "软件", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515880", "fund_name": "通信ETF", "module_level_1": "科技成长", "module_level_2": "通信", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515050", "fund_name": "5GETF", "module_level_1": "科技成长", "module_level_2": "5G", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "562500", "fund_name": "机器人ETF", "module_level_1": "科技成长", "module_level_2": "机器人", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515250", "fund_name": "智能汽车ETF", "module_level_1": "科技成长", "module_level_2": "智能车", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "560800", "fund_name": "数字经济ETF", "module_level_1": "人工智能与数字经济", "module_level_2": "数字经济", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159537", "fund_name": "信创ETF", "module_level_1": "人工智能与数字经济", "module_level_2": "信创", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "516000", "fund_name": "数据ETF", "module_level_1": "人工智能与数字经济", "module_level_2": "数据中心", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "516190", "fund_name": "文娱传媒ETF", "module_level_1": "人工智能与数字经济", "module_level_2": "传媒游戏", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    # 半导体与芯片
+    {"fund_code": "512480", "fund_name": "半导体ETF", "module_level_1": "半导体与芯片", "module_level_2": "半导体", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159995", "fund_name": "芯片ETF", "module_level_1": "半导体与芯片", "module_level_2": "芯片", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "562820", "fund_name": "集成电路ETF", "module_level_1": "半导体与芯片", "module_level_2": "集成电路", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515260", "fund_name": "电子ETF", "module_level_1": "半导体与芯片", "module_level_2": "电子", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159732", "fund_name": "消费电子ETF", "module_level_1": "半导体与芯片", "module_level_2": "消费电子", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "588200", "fund_name": "科创芯片ETF", "module_level_1": "半导体与芯片", "module_level_2": "科创芯片", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    # 电气电力与新能源
+    {"fund_code": "515030", "fund_name": "新能源车ETF", "module_level_1": "电气电力与新能源", "module_level_2": "新能源车", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515790", "fund_name": "光伏ETF", "module_level_1": "电气电力与新能源", "module_level_2": "光伏", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159755", "fund_name": "电池ETF", "module_level_1": "电气电力与新能源", "module_level_2": "电池", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159863", "fund_name": "储能ETF", "module_level_1": "电气电力与新能源", "module_level_2": "储能", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "562960", "fund_name": "绿色电力ETF", "module_level_1": "电气电力与新能源", "module_level_2": "绿色电力", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "159611", "fund_name": "电力ETF", "module_level_1": "电气电力与新能源", "module_level_2": "电力", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "516160", "fund_name": "新能源ETF", "module_level_1": "电气电力与新能源", "module_level_2": "新能源", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159790", "fund_name": "碳中和ETF", "module_level_1": "电气电力与新能源", "module_level_2": "碳中和", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "159862", "fund_name": "风电ETF", "module_level_1": "电气电力与新能源", "module_level_2": "风电", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "561760", "fund_name": "电力设备ETF", "module_level_1": "电气电力与新能源", "module_level_2": "智能电网", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    # 资源周期与商品
+    {"fund_code": "512400", "fund_name": "有色金属ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "有色金属", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "516780", "fund_name": "稀土ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "稀土", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515210", "fund_name": "钢铁ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "钢铁", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515220", "fund_name": "煤炭ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "煤炭", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159930", "fund_name": "能源ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "能源", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "516020", "fund_name": "化工ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "化工", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "162411", "fund_name": "华宝油气", "module_level_1": "资源周期与大宗商品", "module_level_2": "石油", "market": "FUND", "asset_type": "QDII", "risk_level": "高"},
+    {"fund_code": "518880", "fund_name": "黄金ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "黄金", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "159985", "fund_name": "豆粕ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "豆粕", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "159825", "fund_name": "农业ETF", "module_level_1": "资源周期与大宗商品", "module_level_2": "农业资源", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    # 金融地产
+    {"fund_code": "512880", "fund_name": "证券ETF", "module_level_1": "金融地产", "module_level_2": "证券", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "512800", "fund_name": "银行ETF", "module_level_1": "金融地产", "module_level_2": "银行", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "512070", "fund_name": "保险ETF", "module_level_1": "金融地产", "module_level_2": "保险", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "510230", "fund_name": "金融ETF", "module_level_1": "金融地产", "module_level_2": "金融", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "512200", "fund_name": "地产ETF", "module_level_1": "金融地产", "module_level_2": "地产", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "516950", "fund_name": "基建ETF", "module_level_1": "金融地产", "module_level_2": "基建", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "512950", "fund_name": "央企改革ETF", "module_level_1": "金融地产", "module_level_2": "央企金融", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    # 消费医药农业
+    {"fund_code": "159928", "fund_name": "消费ETF", "module_level_1": "消费医药农业", "module_level_2": "消费", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "512690", "fund_name": "酒ETF", "module_level_1": "消费医药农业", "module_level_2": "酒", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "515170", "fund_name": "食品饮料ETF", "module_level_1": "消费医药农业", "module_level_2": "食品饮料", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "512010", "fund_name": "医药ETF", "module_level_1": "消费医药农业", "module_level_2": "医药", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "512170", "fund_name": "医疗ETF", "module_level_1": "消费医药农业", "module_level_2": "医疗", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159992", "fund_name": "创新药ETF", "module_level_1": "消费医药农业", "module_level_2": "创新药", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "562390", "fund_name": "中药ETF", "module_level_1": "消费医药农业", "module_level_2": "中药", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "159865", "fund_name": "养殖ETF", "module_level_1": "消费医药农业", "module_level_2": "养殖", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159825", "fund_name": "农业ETF", "module_level_1": "消费医药农业", "module_level_2": "农业", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    # 港股与海外
+    {"fund_code": "513180", "fund_name": "恒生科技ETF", "module_level_1": "港股与海外", "module_level_2": "恒生科技", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "513330", "fund_name": "恒生互联网ETF", "module_level_1": "港股与海外", "module_level_2": "恒生互联网", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "513040", "fund_name": "港股通互联网ETF", "module_level_1": "港股与海外", "module_level_2": "港股通互联网", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "159920", "fund_name": "恒生ETF", "module_level_1": "港股与海外", "module_level_2": "恒生指数", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "513100", "fund_name": "纳指ETF", "module_level_1": "港股与海外", "module_level_2": "纳斯达克", "market": "SH", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "513500", "fund_name": "标普500ETF", "module_level_1": "港股与海外", "module_level_2": "标普500", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "513030", "fund_name": "德国ETF", "module_level_1": "港股与海外", "module_level_2": "德国", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "513520", "fund_name": "日经ETF", "module_level_1": "港股与海外", "module_level_2": "日经", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "164824", "fund_name": "印度基金LOF", "module_level_1": "港股与海外", "module_level_2": "印度", "market": "FUND", "asset_type": "LOF/QDII", "risk_level": "高"},
+    {"fund_code": "008763", "fund_name": "越南市场基金", "module_level_1": "港股与海外", "module_level_2": "越南", "market": "FUND", "asset_type": "QDII", "risk_level": "高"},
+    # 债券与货币
+    {"fund_code": "511360", "fund_name": "短融ETF", "module_level_1": "债券与货币", "module_level_2": "短债", "market": "SH", "asset_type": "ETF", "risk_level": "低"},
+    {"fund_code": "511260", "fund_name": "十年国债ETF", "module_level_1": "债券与货币", "module_level_2": "中短债", "market": "SH", "asset_type": "ETF", "risk_level": "低"},
+    {"fund_code": "511010", "fund_name": "国债ETF", "module_level_1": "债券与货币", "module_level_2": "国债", "market": "SH", "asset_type": "ETF", "risk_level": "低"},
+    {"fund_code": "511380", "fund_name": "可转债ETF", "module_level_1": "债券与货币", "module_level_2": "可转债", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "511880", "fund_name": "银华日利ETF", "module_level_1": "债券与货币", "module_level_2": "货币基金", "market": "SH", "asset_type": "货币ETF", "risk_level": "低"},
+    {"fund_code": "511520", "fund_name": "政金债ETF", "module_level_1": "债券与货币", "module_level_2": "政金债", "market": "SH", "asset_type": "ETF", "risk_level": "低"},
+    {"fund_code": "511090", "fund_name": "30年国债ETF", "module_level_1": "债券与货币", "module_level_2": "纯债", "market": "SH", "asset_type": "ETF", "risk_level": "低"},
+    # 商品避险、红利低波
+    {"fund_code": "518880", "fund_name": "黄金ETF", "module_level_1": "商品与避险资产", "module_level_2": "黄金", "market": "SH", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "159985", "fund_name": "豆粕ETF", "module_level_1": "商品与避险资产", "module_level_2": "豆粕", "market": "SZ", "asset_type": "ETF", "risk_level": "中高"},
+    {"fund_code": "501018", "fund_name": "南方原油", "module_level_1": "商品与避险资产", "module_level_2": "原油", "market": "FUND", "asset_type": "QDII", "risk_level": "高"},
+    {"fund_code": "159980", "fund_name": "有色ETF", "module_level_1": "商品与避险资产", "module_level_2": "有色", "market": "SZ", "asset_type": "ETF", "risk_level": "高"},
+    {"fund_code": "510880", "fund_name": "红利ETF", "module_level_1": "红利与低波动", "module_level_2": "红利指数", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "515080", "fund_name": "中证红利ETF", "module_level_1": "红利与低波动", "module_level_2": "高股息", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "512890", "fund_name": "红利低波ETF", "module_level_1": "红利与低波动", "module_level_2": "红利低波", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+    {"fund_code": "561580", "fund_name": "央企红利ETF", "module_level_1": "红利与低波动", "module_level_2": "央企红利", "market": "SH", "asset_type": "ETF", "risk_level": "中"},
+]
+
+
+DEFAULT_POSITIONS = pd.DataFrame(
+    [
+        {
+            "fund_code": "515030",
+            "fund_name": "新能源车ETF",
+            "shares": 18500.0,
+            "cost_price": 1.108,
+            "buy_date": "2024-10-18",
+            "account_type": "主账户",
+            "notes": "长期观察仓",
+        },
+        {
+            "fund_code": "512480",
+            "fund_name": "半导体ETF",
+            "shares": 16000.0,
+            "cost_price": 0.892,
+            "buy_date": "2024-12-06",
+            "account_type": "主账户",
+            "notes": "高波动赛道",
+        },
+        {
+            "fund_code": "510300",
+            "fund_name": "沪深300ETF",
+            "shares": 6200.0,
+            "cost_price": 3.780,
+            "buy_date": "2023-08-23",
+            "account_type": "长期账户",
+            "notes": "核心底仓",
+        },
+        {
+            "fund_code": "518880",
+            "fund_name": "黄金ETF",
+            "shares": 3200.0,
+            "cost_price": 4.680,
+            "buy_date": "2024-03-15",
+            "account_type": "防守账户",
+            "notes": "避险配置",
+        },
+    ]
 )
 
 
-CACHE_DIR = Path(".etf_cache")
-CACHE_DIR.mkdir(exist_ok=True)
-SPOT_CACHE_FILE = CACHE_DIR / "etf_spot_cache.csv"
+POSITION_TEMPLATE = "fund_code,fund_name,shares,cost_price,buy_date,account_type,notes\n"
 
 
-def history_cache_file(symbol: str) -> Path:
-    safe_symbol = str(symbol).replace("/", "_").replace("\\", "_")
-    return CACHE_DIR / f"hist_{safe_symbol}.csv"
-
-
-def save_df_cache(df: pd.DataFrame, file_path: Path):
-    try:
-        if df is not None and not df.empty:
-            df.to_csv(file_path, index=False, encoding="utf-8-sig")
-    except Exception:
-        pass
-
-
-def load_df_cache(file_path: Path) -> pd.DataFrame:
-    try:
-        if file_path.exists():
-            return pd.read_csv(file_path)
-    except Exception:
-        pass
-    return pd.DataFrame()
-
-
-CUSTOM_CSS = """
-<style>
-:root {
-    --bg: #0b1020;
-    --surface: rgba(18, 25, 43, 0.92);
-    --surface-soft: rgba(25, 35, 58, 0.86);
-    --line: rgba(149, 164, 190, 0.18);
-    --text: #eef3fb;
-    --muted: #9eabc0;
-    --accent: #60a5fa;
-    --good: #34d399;
-    --warn: #fbbf24;
-    --bad: #fb7185;
+COLUMN_ALIASES = {
+    "fund_code": ["fund_code", "基金代码", "代码", "ETF代码", "基金编号", "证券代码"],
+    "fund_name": ["fund_name", "基金名称", "名称", "证券名称"],
+    "shares": ["shares", "持有份额", "份额", "基金份额", "持仓份额"],
+    "cost_price": ["cost_price", "持仓成本", "买入成本", "成本", "成本价", "买入价"],
+    "current_value": ["current_value", "当前持仓金额", "持仓金额", "市值", "当前市值"],
+    "buy_date": ["buy_date", "买入日期", "建仓日期", "持仓日期"],
+    "account_type": ["account_type", "账户类型", "账户", "组合"],
+    "notes": ["notes", "备注", "说明", "投资逻辑"],
 }
 
-html, body, [data-testid="stAppViewContainer"] {
-    background:
-        radial-gradient(circle at 10% 0%, rgba(37, 99, 235, 0.15), transparent 28%),
-        linear-gradient(180deg, #0b1020 0%, #0d1222 45%, #090d18 100%) !important;
-    color: var(--text) !important;
-}
 
-[data-testid="stHeader"] {
-    background: rgba(11, 16, 32, 0.78) !important;
-    border-bottom: 1px solid rgba(149, 164, 190, 0.12);
-}
-
-[data-testid="stSidebar"] {
-    background: #0a0f1d !important;
-    border-right: 1px solid rgba(149, 164, 190, 0.14);
-}
-
-[data-testid="stSidebar"] * {
-    color: var(--text) !important;
-}
-
-.block-container {
-    max-width: 1500px;
-    padding-top: 1.2rem;
-    padding-bottom: 2.2rem;
-}
-
-.app-title {
-    font-size: 32px;
-    line-height: 1.2;
-    font-weight: 760;
-    letter-spacing: 0;
-    color: #ffffff !important;
-    margin-bottom: 0.25rem;
-}
-
-.app-subtitle {
-    color: var(--muted) !important;
-    font-size: 14px;
-    margin-bottom: 1.05rem;
-}
-
-.section-shell {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 16px 18px;
-    margin-bottom: 14px;
-}
-
-.section-title {
-    font-size: 17px;
-    font-weight: 720;
-    color: #ffffff !important;
-    margin-bottom: 4px;
-}
-
-.section-note {
-    font-size: 13px;
-    line-height: 1.65;
-    color: var(--muted) !important;
-}
-
-.status-ok, .status-warn, .status-bad {
-    border-radius: 8px;
-    padding: 12px 14px;
-    font-weight: 680;
-    margin: 10px 0 16px;
-    border: 1px solid var(--line);
-}
-.status-ok { background: rgba(16, 76, 69, 0.72); color: #d9fff4 !important; }
-.status-warn { background: rgba(84, 63, 16, 0.72); color: #fff2ca !important; }
-.status-bad { background: rgba(85, 33, 47, 0.72); color: #ffe0e7 !important; }
-
-.signal-card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 16px 18px;
-    margin-bottom: 12px;
-}
-
-.signal-card strong {
-    color: #ffffff !important;
-}
-
-.signal-text {
-    color: #e7edf8 !important;
-    line-height: 1.75;
-    font-size: 14px;
-}
-
-.good { color: var(--good) !important; font-weight: 720; }
-.warn { color: var(--warn) !important; font-weight: 720; }
-.bad { color: var(--bad) !important; font-weight: 720; }
-.neutral { color: #bfccdd !important; font-weight: 720; }
-
-h1, h2, h3, h4, h5, h6, p, span, label {
-    color: var(--text) !important;
-}
-
-div[data-testid="stMetric"] {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 14px 16px !important;
-    min-height: 98px;
-}
-
-div[data-testid="stMetricLabel"] {
-    color: var(--muted) !important;
-    font-weight: 620;
-}
-
-div[data-testid="stMetricValue"] {
-    color: #ffffff !important;
-    font-weight: 760;
-}
-
-[data-testid="stSidebar"] [data-baseweb="select"] > div,
-[data-testid="stSidebar"] [data-baseweb="input"] > div,
-[data-testid="stSidebar"] textarea,
-[data-testid="stSidebar"] input {
-    background: #111827 !important;
-    color: #f8fafc !important;
-    border: 1px solid rgba(149, 164, 190, 0.26) !important;
-    border-radius: 8px !important;
-}
-
-div[role="listbox"] {
-    background: #111827 !important;
-    border: 1px solid rgba(149, 164, 190, 0.26) !important;
-}
-
-button[data-baseweb="tab"] {
-    color: #cbd5e1 !important;
-    font-weight: 680 !important;
-}
-button[data-baseweb="tab"][aria-selected="true"] {
-    color: #ffffff !important;
-}
-
-.stButton button {
-    background: #172033 !important;
-    color: #f8fafc !important;
-    border: 1px solid rgba(149, 164, 190, 0.24) !important;
-    border-radius: 8px !important;
-}
-</style>
-"""
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
-
-ETF_MODULES = {
-    "宽基指数": {
-        "沪深300ETF": "510300", "上证50ETF": "510050", "中证500ETF": "510500", "中证1000ETF": "512100",
-        "创业板ETF": "159915", "科创50ETF": "588000", "双创50ETF": "159781", "红利ETF": "510880",
-    },
-    "科技与高端制造": {
-        "半导体ETF": "512480", "芯片ETF": "159995", "人工智能ETF": "515980", "云计算ETF": "516510",
-        "软件ETF": "515230", "通信ETF": "515880", "5GETF": "515050", "机器人ETF": "562500",
-        "智能车ETF": "159888", "军工ETF": "512660",
-    },
-    "电气电力与新能源": {
-        "新能源车ETF": "515030", "光伏ETF": "515790", "电池ETF": "561910", "储能电池ETF": "159566",
-        "绿色电力ETF": "562960", "电力ETF": "561560", "新能源ETF": "516160", "碳中和ETF": "159790",
-        "央企能源ETF": "562850",
-    },
-    "资源周期与大宗商品": {
-        "有色金属ETF": "512400", "稀土ETF": "516780", "钢铁ETF": "515210", "煤炭ETF": "515220",
-        "能源ETF": "159930", "化工ETF": "516020", "石油基金": "162719", "黄金ETF": "518880", "豆粕ETF": "159985",
-    },
-    "金融地产": {
-        "证券ETF": "512880", "银行ETF": "512800", "保险证券ETF": "515630", "地产ETF": "512200", "金融ETF": "510230",
-    },
-    "消费医药农业": {
-        "消费ETF": "159928", "酒ETF": "512690", "食品饮料ETF": "515170", "医药ETF": "512010",
-        "医疗ETF": "512170", "创新药ETF": "159992", "养殖ETF": "159865", "农业ETF": "159825",
-    },
-    "港股与海外": {
-        "恒生科技ETF": "513130", "恒生互联网ETF": "513330", "港股通互联网ETF": "159792", "恒生ETF": "159920",
-        "纳指ETF": "513100", "标普500ETF": "513500", "德国ETF": "513030", "日经ETF": "513520",
-    },
-}
-
-DEFAULT_ETFS = {name: code for items in ETF_MODULES.values() for name, code in items.items()}
-CODE_TO_NAME = {code: name for name, code in DEFAULT_ETFS.items()}
-
-
-def safe_num(x):
-    try:
-        if pd.isna(x):
-            return np.nan
-        if isinstance(x, str):
-            x = x.replace("%", "").replace(",", "").replace("，", "").strip()
-        return float(x)
-    except Exception:
-        return np.nan
-
-
-def format_money(x):
-    x = safe_num(x)
-    if pd.isna(x):
-        return "暂无"
-    if abs(x) >= 1e8:
-        return f"{x / 1e8:.2f} 亿"
-    if abs(x) >= 1e4:
-        return f"{x / 1e4:.2f} 万"
-    return f"{x:.2f}"
-
-
-def format_pct(x):
-    x = safe_num(x)
-    if pd.isna(x):
-        return "暂无"
-    return f"{x:.2f}%"
-
-
-def get_sec_id(symbol: str) -> str:
-    symbol = str(symbol).strip()
-    return f"1.{symbol}" if symbol.startswith(("5", "6", "9")) else f"0.{symbol}"
-
-
-def request_json_fast(url: str, params: dict, timeout: int = 6):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
-        "Accept": "application/json,text/plain,*/*",
-        "Referer": "https://quote.eastmoney.com/",
-    }
-    response = requests.get(url, params=params, headers=headers, timeout=timeout)
-    response.raise_for_status()
-    return response.json()
-
-
-def fetch_spot_from_eastmoney(codes) -> pd.DataFrame:
-    unique_codes = []
-    for code in codes:
-        code = str(code).strip()
-        if re.fullmatch(r"\d{6}", code) and code not in unique_codes:
-            unique_codes.append(code)
-    if not unique_codes:
-        return pd.DataFrame()
-
-    url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
-    params = {
-        "fltt": "2",
-        "secids": ",".join(get_sec_id(code) for code in unique_codes),
-        "fields": "f12,f14,f2,f3,f4,f5,f6",
-    }
-    data = request_json_fast(url, params=params, timeout=6)
-    diff = data.get("data", {}).get("diff", [])
-    if not diff:
-        raise RuntimeError("东方财富实时行情接口返回为空")
-
-    df = pd.DataFrame([{
-        "代码": str(item.get("f12", "")),
-        "名称": item.get("f14", ""),
-        "最新价": item.get("f2", np.nan),
-        "涨跌幅": item.get("f3", np.nan),
-        "涨跌额": item.get("f4", np.nan),
-        "成交量": item.get("f5", np.nan),
-        "成交额": item.get("f6", np.nan),
-    } for item in diff])
-    for col in ["最新价", "涨跌幅", "涨跌额", "成交量", "成交额"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
-
-
-def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
-    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-    params = {
-        "secid": get_sec_id(symbol),
-        "fields1": "f1,f2,f3,f4,f5,f6",
-        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "klt": "101",
-        "fqt": "0",
-        "beg": "20000101",
-        "end": dt.datetime.now().strftime("%Y%m%d"),
-        "lmt": str(max(days * 2, 600)),
-    }
-    data = request_json_fast(url, params=params, timeout=8)
-    klines = data.get("data", {}).get("klines", [])
-    if not klines:
-        raise RuntimeError("东方财富历史行情接口返回为空")
-
-    rows = []
-    for line in klines:
-        parts = line.split(",")
-        if len(parts) >= 7:
-            rows.append({
-                "日期": parts[0], "开盘": parts[1], "收盘": parts[2], "最高": parts[3], "最低": parts[4],
-                "成交量": parts[5], "成交额": parts[6], "涨跌幅": parts[8] if len(parts) > 8 else np.nan,
-            })
-    df = pd.DataFrame(rows)
-    if df.empty:
-        raise RuntimeError("东方财富历史行情解析后为空")
-    df["日期"] = pd.to_datetime(df["日期"])
-    for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df.sort_values("日期").tail(days).reset_index(drop=True)
-
-
-def get_base_price(symbol: str) -> float:
-    base_price_map = {
-        "510300": 3.8, "510050": 2.7, "510500": 5.8, "512100": 2.3, "159915": 1.8, "588000": 0.9,
-        "159781": 0.8, "510880": 3.0, "512480": 0.8, "159995": 0.9, "515980": 0.9, "516510": 0.8,
-        "515230": 0.7, "515880": 1.1, "515050": 1.0, "562500": 1.0, "159888": 1.0, "512660": 1.0,
-        "515030": 1.1, "515790": 0.75, "561910": 0.8, "159566": 1.0, "562960": 1.0, "561560": 1.0,
-        "516160": 0.8, "159790": 0.8, "562850": 1.0, "512400": 1.2, "516780": 1.0, "515210": 1.0,
-        "515220": 1.3, "159930": 1.0, "516020": 0.75, "162719": 1.0, "518880": 5.2, "159985": 1.0,
-        "512880": 0.9, "512800": 1.1, "515630": 0.9, "512200": 0.8, "510230": 1.0, "159928": 0.9,
-        "512690": 0.8, "515170": 0.8, "512010": 0.45, "512170": 0.4, "159992": 0.6, "159865": 0.8,
-        "159825": 0.8, "513130": 0.55, "513330": 0.5, "159792": 0.6, "159920": 1.0, "513100": 1.6,
-        "513500": 1.6, "513030": 1.0, "513520": 1.0,
-    }
-    return base_price_map.get(str(symbol), 1.0)
-
-
-def generate_fallback_history(symbol: str, days: int = 240) -> pd.DataFrame:
-    rng = np.random.default_rng(abs(hash(str(symbol))) % (2**32))
-    dates = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=days)
-    base_price = get_base_price(symbol)
-    returns = rng.normal(loc=0.0002, scale=0.013, size=len(dates))
-    trend = np.linspace(-0.02, 0.04, len(dates))
-    prices = base_price * np.cumprod(1 + returns) * (1 + trend)
-    open_prices = prices * (1 + rng.normal(0, 0.004, len(dates)))
-    high_prices = np.maximum(open_prices, prices) * (1 + rng.uniform(0.002, 0.016, len(dates)))
-    low_prices = np.minimum(open_prices, prices) * (1 - rng.uniform(0.002, 0.016, len(dates)))
-    amount = rng.uniform(1.2e8, 16e8, len(dates))
-    volume = amount / np.maximum(prices, 0.01) / 100
-    df = pd.DataFrame({
-        "日期": dates, "开盘": open_prices, "收盘": prices, "最高": high_prices, "最低": low_prices,
-        "成交量": volume, "成交额": amount,
-    })
-    df["涨跌幅"] = df["收盘"].pct_change().fillna(0) * 100
-    return df
-
-
-def generate_fallback_spot(codes=None) -> pd.DataFrame:
-    rng = np.random.default_rng(int(pd.Timestamp.today().strftime("%Y%m%d")))
-    code_set = {str(x) for x in codes or DEFAULT_ETFS.values()}
-    rows = []
-    for name, code in DEFAULT_ETFS.items():
-        if str(code) not in code_set:
-            continue
-        base = get_base_price(code)
-        pct = rng.normal(0, 1.1)
-        latest = base * (1 + pct / 100)
-        rows.append({
-            "代码": code, "名称": name, "最新价": round(latest, 3), "涨跌幅": round(pct, 2),
-            "涨跌额": round(latest - base, 3), "成交额": rng.uniform(1e8, 20e8),
-        })
-    return pd.DataFrame(rows)
-
-
-def add_indicators(df):
-    df = df.copy()
-    df["MA5"] = df["收盘"].rolling(5).mean()
-    df["MA10"] = df["收盘"].rolling(10).mean()
-    df["MA20"] = df["收盘"].rolling(20).mean()
-    df["MA60"] = df["收盘"].rolling(60).mean()
-    df["日涨跌幅"] = df["收盘"].pct_change() * 100
-    df["成交额"] = df["成交额"] if "成交额" in df.columns else np.nan
-    df["成交额_MA5"] = df["成交额"].rolling(5).mean()
-    df["成交额_MA20"] = df["成交额"].rolling(20).mean()
-    df["量能倍率"] = df["成交额"] / df["成交额_MA20"]
-    volume = df["成交量"].fillna(0) if "成交量" in df.columns else df["成交额"].fillna(0)
-    direction = np.sign(df["收盘"].diff()).fillna(0)
-    df["OBV"] = (direction * volume).cumsum()
-    df["OBV_MA10"] = df["OBV"].rolling(10).mean()
-    df["资金行为强度"] = df["日涨跌幅"] * df["成交额"] / 1e8
-    for ma in ["MA5", "MA20", "MA60"]:
-        df[f"均线偏离_{ma}"] = (df["收盘"] / df[ma] - 1) * 100
-    df["资金信号"] = df.apply(classify_money_signal, axis=1)
-    return df
-
-
-def classify_money_signal(row):
-    pct = row.get("日涨跌幅", np.nan)
-    vol_ratio = row.get("量能倍率", np.nan)
-    obv = row.get("OBV", np.nan)
-    obv_ma = row.get("OBV_MA10", np.nan)
-    if pd.isna(pct) or pd.isna(vol_ratio):
-        return "数据不足"
-    obv_strong = pd.notna(obv) and pd.notna(obv_ma) and obv > obv_ma
-    obv_weak = pd.notna(obv) and pd.notna(obv_ma) and obv < obv_ma
-    if pct > 1.2 and vol_ratio >= 1.25 and obv_strong:
-        return "强流入"
-    if pct > 0.3 and vol_ratio >= 1.05:
-        return "温和流入"
-    if pct < -1.2 and vol_ratio >= 1.25 and obv_weak:
-        return "强撤出"
-    if pct < -0.3 and vol_ratio >= 1.05:
-        return "温和撤出"
-    if abs(pct) < 0.3 and vol_ratio >= 1.3:
-        return "分歧放量"
-    if vol_ratio < 0.75:
-        return "缩量观望"
-    return "中性"
-
-
-@st.cache_data(ttl=30, show_spinner=False)
-def get_etf_spot(codes_tuple):
-    codes = list(codes_tuple)
-    try:
-        df = fetch_spot_from_eastmoney(codes)
-        save_df_cache(df, SPOT_CACHE_FILE)
-        return df, "东方财富实时行情"
-    except Exception as e:
-        cached = load_df_cache(SPOT_CACHE_FILE)
-        if not cached.empty and "代码" in cached.columns:
-            cached["代码"] = cached["代码"].astype(str)
-            cached = cached[cached["代码"].isin([str(x) for x in codes])]
-            if not cached.empty:
-                return cached, f"缓存实时行情，东方财富错误：{e}"
-        return generate_fallback_spot(codes), f"备用展示数据，东方财富错误：{e}"
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def get_etf_history(symbol: str, days: int = 240):
-    cache_file = history_cache_file(symbol)
-    try:
-        df = fetch_history_from_eastmoney(symbol, days)
-        save_df_cache(df, cache_file)
-        return add_indicators(df).tail(days).reset_index(drop=True), "东方财富历史行情"
-    except Exception as e:
-        cached = load_df_cache(cache_file)
-        if not cached.empty:
-            cached["日期"] = pd.to_datetime(cached["日期"])
-            for col in ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]:
-                if col in cached.columns:
-                    cached[col] = pd.to_numeric(cached[col], errors="coerce")
-            return add_indicators(cached).tail(days).reset_index(drop=True), f"缓存历史行情，东方财富错误：{e}"
-        return add_indicators(generate_fallback_history(symbol, days)).tail(days).reset_index(drop=True), f"备用展示数据，东方财富错误：{e}"
-
-
-def normalize_spot_columns(df):
-    if df is None or df.empty:
-        return pd.DataFrame()
-    mapping = {}
-    for col in df.columns:
-        if col in ["代码", "基金代码"]:
-            mapping[col] = "代码"
-        elif col in ["名称", "基金简称", "基金名称"]:
-            mapping[col] = "名称"
-        elif col in ["最新价", "最新净值", "单位净值"]:
-            mapping[col] = "最新价"
-        elif col in ["涨跌幅", "日增长率"]:
-            mapping[col] = "涨跌幅"
-        elif col in ["涨跌额", "成交额", "成交量"]:
-            mapping[col] = col
-    return df.rename(columns=mapping)
-
-
-def compute_summary(hist):
-    if hist is None or hist.empty or len(hist) < 60:
-        return {"trend_score": 0, "trend_label": "数据不足", "risk_label": "无法判断", "money_label": "无法判断", "action_label": "观察", "comment": "历史数据不足，暂无法形成稳定判断。"}
-    latest = hist.iloc[-1]
-    close = latest["收盘"]
-    trend_score = 0
-    trend_score += int(pd.notna(latest["MA5"]) and close > latest["MA5"])
-    trend_score += int(pd.notna(latest["MA20"]) and close > latest["MA20"])
-    trend_score += int(pd.notna(latest["MA60"]) and close > latest["MA60"])
-    trend_score += int(pd.notna(latest["MA5"]) and pd.notna(latest["MA20"]) and latest["MA5"] > latest["MA20"])
-    trend_score += int(pd.notna(latest["MA20"]) and pd.notna(latest["MA60"]) and latest["MA20"] > latest["MA60"])
-    trend_label = "趋势偏强" if trend_score >= 4 else "趋势修复" if trend_score == 3 else "震荡偏弱" if trend_score == 2 else "趋势偏弱"
-
-    bias20 = latest["均线偏离_MA20"]
-    if pd.isna(bias20):
-        risk_label = "风险不明"
-    elif bias20 > 8:
-        risk_label = "短期过热"
-    elif bias20 > 4:
-        risk_label = "略偏高"
-    elif bias20 < -8:
-        risk_label = "深度回调"
-    elif bias20 < -4:
-        risk_label = "回调区"
-    else:
-        risk_label = "正常波动"
-
-    money_signal = latest["资金信号"]
-    if trend_label in ["趋势偏强", "趋势修复"] and money_signal in ["强流入", "温和流入"]:
-        action_label = "持有观察 / 不宜追高"
-    elif trend_label == "趋势偏弱" and money_signal in ["强撤出", "温和撤出"]:
-        action_label = "谨慎观望"
-    elif risk_label in ["深度回调", "回调区"] and money_signal != "强撤出":
-        action_label = "适合小额定投观察"
-    elif risk_label == "短期过热":
-        action_label = "避免一次性追高"
-    else:
-        action_label = "震荡观察"
-    return {
-        "trend_score": trend_score,
-        "trend_label": trend_label,
-        "risk_label": risk_label,
-        "money_label": money_signal,
-        "action_label": action_label,
-        "comment": generate_commentary(latest, trend_label, risk_label, money_signal, action_label),
-    }
-
-
-def generate_commentary(latest, trend_label, risk_label, money_label, action_label):
-    close = latest["收盘"]
-    lines = []
-    if pd.notna(latest["MA5"]):
-        lines.append("价格位于5日均线上方，短线动能尚可。" if close > latest["MA5"] else "价格低于5日均线，短线动能偏弱。")
-    if pd.notna(latest["MA20"]):
-        lines.append("价格站上20日均线，短期结构有修复迹象。" if close > latest["MA20"] else "价格仍低于20日均线，短期趋势尚未完全扭转。")
-    if pd.notna(latest["MA60"]):
-        lines.append("价格处于60日均线上方，中期结构相对稳定。" if close > latest["MA60"] else "价格低于60日均线，中期趋势仍需谨慎。")
-    vol_ratio = latest["量能倍率"]
-    if pd.notna(vol_ratio):
-        if vol_ratio >= 1.5:
-            lines.append(f"当前成交额约为20日均值的 {vol_ratio:.2f} 倍，属于明显放量。")
-        elif vol_ratio >= 1.1:
-            lines.append(f"当前成交额约为20日均值的 {vol_ratio:.2f} 倍，量能有所放大。")
-        elif vol_ratio < 0.75:
-            lines.append(f"当前成交额约为20日均值的 {vol_ratio:.2f} 倍，市场参与度偏低。")
-        else:
-            lines.append(f"当前成交额约为20日均值的 {vol_ratio:.2f} 倍，量能处于正常区间。")
-    if money_label in ["强流入", "温和流入"]:
-        lines.append("资金行为代理指标偏流入，短线情绪有所改善。")
-    elif money_label in ["强撤出", "温和撤出"]:
-        lines.append("资金行为代理指标偏撤出，短线需要警惕继续回落。")
-    elif money_label == "分歧放量":
-        lines.append("当前属于放量分歧状态，多空力量博弈较强。")
-    elif money_label == "缩量观望":
-        lines.append("当前缩量明显，资金参与意愿不足。")
-    lines.append(f"综合判断：{trend_label}，风险状态为{risk_label}，当前策略更偏向“{action_label}”。")
-    return "\n\n".join(lines)
-
-
-def draw_professional_chart(hist):
-    fig = make_subplots(
-        rows=3,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.075,
-        row_heights=[0.58, 0.22, 0.20],
-        subplot_titles=("价格/净值走势与均线结构", "成交额与量能变化", "资金行为强度代理指标"),
-    )
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["收盘"], mode="lines", name="收盘价/净值", line=dict(width=2.8, color="#f8fafc")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA5"], mode="lines", name="MA5", line=dict(width=1.6, color="#38bdf8")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA20"], mode="lines", name="MA20", line=dict(width=1.8, color="#fbbf24")), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA60"], mode="lines", name="MA60", line=dict(width=1.8, color="#a78bfa")), row=1, col=1)
-
-    marker_specs = [("强流入", "#22c55e", "triangle-up", 10), ("强撤出", "#ef4444", "triangle-down", 10), ("温和流入", "#86efac", "circle", 7), ("温和撤出", "#fca5a5", "circle", 7)]
-    for signal, color, symbol, size in marker_specs:
-        points = hist[hist["资金信号"] == signal]
-        if not points.empty:
-            fig.add_trace(go.Scatter(x=points["日期"], y=points["收盘"], mode="markers", name=signal, marker=dict(size=size, color=color, symbol=symbol)), row=1, col=1)
-
-    amount_colors = np.where(hist["日涨跌幅"] >= 0, "#22c55e", "#ef4444")
-    fig.add_trace(go.Bar(x=hist["日期"], y=hist["成交额"] / 1e8, name="成交额/亿", marker_color=amount_colors, opacity=0.68), row=2, col=1)
-    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["成交额_MA20"] / 1e8, mode="lines", name="成交额MA20/亿", line=dict(width=1.6, color="#fbbf24")), row=2, col=1)
-
-    money_colors = np.where(hist["资金行为强度"] >= 0, "#22c55e", "#ef4444")
-    fig.add_trace(go.Bar(x=hist["日期"], y=hist["资金行为强度"], name="资金行为强度", marker_color=money_colors, opacity=0.76), row=3, col=1)
-    fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#94a3b8", row=3, col=1)
-    fig.update_layout(
-        height=820,
-        hovermode="x unified",
-        plot_bgcolor="#111827",
-        paper_bgcolor="#111827",
-        font=dict(color="#f8fafc", size=13),
-        legend=dict(orientation="h", yanchor="bottom", y=1.08, xanchor="left", x=0, bgcolor="rgba(17,24,39,0.80)"),
-        margin=dict(l=30, r=30, t=92, b=32),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.14)", zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.14)", zeroline=False)
-    fig.update_yaxes(title_text="价格/净值", row=1, col=1)
-    fig.update_yaxes(title_text="成交额/亿", row=2, col=1)
-    fig.update_yaxes(title_text="强度", row=3, col=1)
-    for ann in fig["layout"]["annotations"]:
-        ann["font"] = dict(size=15, color="#f8fafc")
-    return fig
-
-
-def build_market_table(spot_df, watch_codes):
-    df = normalize_spot_columns(spot_df).copy()
-    if df.empty or "代码" not in df.columns:
-        return pd.DataFrame()
-    df["代码"] = df["代码"].astype(str)
-    if watch_codes:
-        df = df[df["代码"].isin([str(x) for x in watch_codes])]
-    for col in ["涨跌幅", "成交额", "最新价", "涨跌额"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    keep_cols = [c for c in ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额"] if c in df.columns]
-    df = df[keep_cols].copy()
-    if "成交额" in df.columns:
-        df["成交额显示"] = df["成交额"].apply(format_money)
-    return df
-
-
-def ocr_image_to_text(image: Image.Image) -> tuple[str, str]:
-    if importlib.util.find_spec("pytesseract"):
-        try:
-            import pytesseract
-            text = pytesseract.image_to_string(image, lang="chi_sim+eng")
-            return text, "pytesseract"
-        except Exception as e:
-            return "", f"pytesseract不可用：{e}"
-    return "", "当前环境未检测到OCR组件。可先手动粘贴识别文本，或安装 pytesseract/Tesseract 后启用自动识别。"
-
-
-def parse_amount(text: str) -> float:
-    if not text:
-        return np.nan
-    cleaned = text.replace(",", "").replace("，", "").replace("￥", "").replace("元", "").strip()
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
-    if not match:
-        return np.nan
-    value = float(match.group())
-    if "万" in cleaned:
-        value *= 10000
-    elif "亿" in cleaned:
-        value *= 100000000
-    return value
-
-
-def extract_holdings_from_text(text: str) -> pd.DataFrame:
-    rows = []
-    seen = set()
-    lines = [line.strip() for line in re.split(r"[\r\n]+", text or "") if line.strip()]
-    context_lines = []
-    for idx, line in enumerate(lines):
-        context = " ".join(lines[max(0, idx - 1): min(len(lines), idx + 2)])
-        context_lines.append(context)
-        codes = re.findall(r"(?<!\d)(?:1|5|6|9)\d{5}(?!\d)", context)
-        for code in codes:
-            if code in seen:
-                continue
-            seen.add(code)
-            amount_candidates = re.findall(r"(?:持有|市值|金额|资产|参考市值|持仓)[^\d-]*([-+]?\d[\d,，]*(?:\.\d+)?\s*[万亿]?)", context)
-            if not amount_candidates:
-                amount_candidates = re.findall(r"[-+]?\d[\d,，]*(?:\.\d+)?\s*[万亿]?", context)
-            amount = np.nan
-            numeric_candidates = [parse_amount(x) for x in amount_candidates]
-            numeric_candidates = [x for x in numeric_candidates if pd.notna(x) and x > 10 and abs(x - int(code)) > 1]
-            if numeric_candidates:
-                amount = max(numeric_candidates)
-            rows.append({"代码": code, "名称": CODE_TO_NAME.get(code, ""), "持仓金额": amount, "识别来源": "代码识别"})
-
-    for name, code in DEFAULT_ETFS.items():
-        if code in seen or name not in text:
-            continue
-        for context in context_lines:
-            if name in context:
-                amount_candidates = re.findall(r"[-+]?\d[\d,，]*(?:\.\d+)?\s*[万亿]?", context)
-                numeric_candidates = [parse_amount(x) for x in amount_candidates]
-                numeric_candidates = [x for x in numeric_candidates if pd.notna(x) and x > 10]
-                rows.append({"代码": code, "名称": name, "持仓金额": max(numeric_candidates) if numeric_candidates else np.nan, "识别来源": "名称识别"})
-                seen.add(code)
-                break
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return pd.DataFrame(columns=["代码", "名称", "持仓金额", "识别来源"])
-    df["持仓金额"] = pd.to_numeric(df["持仓金额"], errors="coerce")
-    return df.drop_duplicates(subset=["代码"], keep="first").reset_index(drop=True)
-
-
-def enrich_holdings(holdings_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    if holdings_df is None or holdings_df.empty:
-        return pd.DataFrame(), "暂无持仓"
-    df = holdings_df.copy()
-    df["代码"] = df["代码"].astype(str).str.extract(r"(\d{6})")[0]
-    df = df.dropna(subset=["代码"])
-    df["持仓金额"] = pd.to_numeric(df["持仓金额"], errors="coerce")
-    codes = tuple(df["代码"].dropna().unique().tolist())
-    spot, source = get_etf_spot(codes)
-    spot = normalize_spot_columns(spot)
-    if not spot.empty:
-        spot["代码"] = spot["代码"].astype(str)
-        df = df.merge(spot[["代码", "名称", "最新价", "涨跌幅"]], on="代码", how="left", suffixes=("", "_行情"))
-        df["名称"] = df["名称"].where(df["名称"].astype(str).str.len() > 0, df["名称_行情"])
-        df = df.drop(columns=[c for c in ["名称_行情"] if c in df.columns])
-    else:
-        df["最新价"] = np.nan
-        df["涨跌幅"] = np.nan
-    df["估算今日盈亏"] = df["持仓金额"] * df["涨跌幅"] / 100
-    df["估算收盘后金额"] = df["持仓金额"] + df["估算今日盈亏"]
-    return df, source
-
-
-def render_status(spot_source: str, hist_source: str):
-    if "备用展示" in hist_source or "备用展示" in spot_source:
-        st.markdown('<div class="status-bad">当前启用了备用展示数据：仅用于保证看板可打开，不是真实行情，不作为投资参考。</div>', unsafe_allow_html=True)
-    elif "缓存" in hist_source or "缓存" in spot_source:
-        st.markdown('<div class="status-warn">当前部分数据来自最近一次成功缓存，公开行情接口可能暂时不稳定。</div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="status-ok">当前数据源状态：东方财富真实行情接口正常。</div>', unsafe_allow_html=True)
-
-
-st.markdown('<div class="app-title">基金 / ETF 实时分析看板</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-subtitle">行情监控、趋势结构、资金行为代理与持仓当日盈亏估算</div>', unsafe_allow_html=True)
-
-with st.sidebar:
-    st.header("看板设置")
-    module_name = st.selectbox("选择基金模块", list(ETF_MODULES.keys()), index=list(ETF_MODULES.keys()).index("电气电力与新能源"))
-    module_etfs = ETF_MODULES[module_name]
-    selected_name = st.selectbox("选择模块内基金/ETF", list(module_etfs.keys()), index=0)
-    st.divider()
-    custom_mode = st.checkbox("手动输入基金/ETF代码", value=False)
-    if custom_mode:
-        selected_code = st.text_input("输入6位基金/ETF代码", value=module_etfs[selected_name]).strip()
-        selected_display_name = f"自查基金/ETF {selected_code}"
-        watch_codes = list(dict.fromkeys([selected_code] + list(module_etfs.values())))
-    else:
-        selected_code = module_etfs[selected_name]
-        selected_display_name = selected_name
-        watch_codes = list(module_etfs.values())
-    days = st.slider("历史分析周期", min_value=80, max_value=520, value=240, step=20)
-    st.divider()
-    auto_refresh = st.checkbox("自动刷新", value=False)
-    refresh_seconds = st.slider("刷新间隔/秒", min_value=30, max_value=600, value=90, step=30)
-    st.divider()
-    if st.button("清除页面缓存并刷新"):
-        st.cache_data.clear()
+@dataclass
+class FundSnapshot:
+    fund_code: str
+    fund_name: str
+    module_level_1: str
+    module_level_2: str
+    close: float
+    pct_change: float
+    amount: float
+    volume_ratio: float
+    trend_score: int
+    trend_label: str
+    money_signal: str
+    risk_label: str
+    action_label: str
+    ma20_deviation: float
+    source: str
+
+
+def rerun_app() -> None:
+    if hasattr(st, "rerun"):
         st.rerun()
-    st.caption("数据来自东方财富公开行情接口；接口失败时优先读取缓存，仍失败则展示模拟数据。")
-
-
-try:
-    with st.spinner("正在获取行情数据..."):
-        spot_df, spot_source = get_etf_spot(tuple(watch_codes))
-        spot_norm = normalize_spot_columns(spot_df)
-        hist, hist_source = get_etf_history(selected_code, days=days)
-
-    if hist.empty:
-        st.warning("未获取到历史行情，请检查代码是否正确，或稍后重试。")
-        st.stop()
-
-    render_status(spot_source, hist_source)
-    summary = compute_summary(hist)
-    latest = hist.iloc[-1]
-
-    selected_spot = pd.DataFrame()
-    if "代码" in spot_norm.columns:
-        spot_norm["代码"] = spot_norm["代码"].astype(str)
-        selected_spot = spot_norm[spot_norm["代码"] == str(selected_code)]
-
-    if not selected_spot.empty:
-        spot_row = selected_spot.iloc[0]
-        real_name = spot_row.get("名称", selected_display_name)
-        latest_price = spot_row.get("最新价", latest["收盘"])
-        today_pct = spot_row.get("涨跌幅", latest.get("日涨跌幅", np.nan))
-        today_amount = spot_row.get("成交额", latest.get("成交额", np.nan))
     else:
-        real_name = selected_display_name
-        latest_price = latest["收盘"]
-        today_pct = latest.get("日涨跌幅", np.nan)
-        today_amount = latest.get("成交额", np.nan)
+        st.experimental_rerun()
 
-    top_cols = st.columns(5)
-    top_cols[0].metric("基金/ETF", real_name)
-    top_cols[1].metric("当前价/净值", f"{safe_num(latest_price):.3f}" if pd.notna(safe_num(latest_price)) else "暂无")
-    top_cols[2].metric("今日涨跌幅", format_pct(today_pct))
-    top_cols[3].metric("成交额", format_money(today_amount))
-    top_cols[4].metric("资金信号", summary["money_label"])
 
-    sub_cols = st.columns(5)
-    sub_cols[0].metric("趋势评分", f"{summary['trend_score']} / 5")
-    sub_cols[1].metric("趋势状态", summary["trend_label"])
-    sub_cols[2].metric("风险状态", summary["risk_label"])
-    sub_cols[3].metric("量能倍率", f"{latest['量能倍率']:.2f}x" if pd.notna(latest["量能倍率"]) else "暂无")
-    sub_cols[4].metric("策略提示", summary["action_label"])
+def apply_page_config() -> None:
+    st.set_page_config(
+        page_title="FundPilot Pro | 基金智能驾驶舱",
+        page_icon="📊",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
+
+def inject_css() -> None:
+    st.markdown(
+        """
+        <style>
+        :root {
+            --bg: #050816;
+            --bg2: #071126;
+            --panel: #0B1020;
+            --panel2: #111827;
+            --border: rgba(88, 213, 255, 0.26);
+            --text: #F8FAFC;
+            --muted: #A8B7CF;
+            --blue: #58D5FF;
+            --green: #22C55E;
+            --red: #EF4444;
+            --yellow: #FBBF24;
+            --purple: #A78BFA;
+        }
+        .stApp {
+            background:
+                radial-gradient(circle at 12% 0%, rgba(88, 213, 255, 0.08), transparent 30%),
+                linear-gradient(135deg, #050816 0%, #071126 50%, #0B1020 100%);
+            color: var(--text);
+        }
+        [data-testid="stSidebar"] {
+            background:
+                linear-gradient(180deg, rgba(7, 17, 38, .98), rgba(5, 8, 22, .98));
+            border-right: 1px solid rgba(88, 213, 255, 0.18);
+        }
+        [data-testid="stSidebar"] * {
+            color: var(--text);
+        }
+        [data-testid="stMetricValue"] {
+            color: var(--text);
+        }
+        [data-testid="stMetricDelta"] svg {
+            display: none;
+        }
+        .block-container {
+            padding-top: 1.1rem;
+            padding-bottom: 2rem;
+            max-width: 1680px;
+        }
+        h1, h2, h3 {
+            letter-spacing: 0;
+        }
+        .hero {
+            border: 1px solid rgba(88, 213, 255, 0.28);
+            background:
+                linear-gradient(120deg, rgba(11, 16, 32, 0.94), rgba(7, 17, 38, 0.9)),
+                linear-gradient(90deg, rgba(88, 213, 255, 0.14), rgba(167, 139, 250, 0.12));
+            border-radius: 8px;
+            padding: 18px 20px;
+            box-shadow: 0 0 28px rgba(88, 213, 255, 0.09);
+            margin-bottom: 14px;
+        }
+        .hero h1 {
+            margin: 0;
+            font-size: clamp(1.35rem, 2.2vw, 2.3rem);
+            line-height: 1.15;
+        }
+        .hero p {
+            margin: 8px 0 0;
+            color: var(--muted);
+            font-size: .95rem;
+        }
+        .metric-card, .panel, .signal-card, .result-card {
+            border: 1px solid rgba(88, 213, 255, 0.22);
+            background:
+                linear-gradient(180deg, rgba(17, 24, 39, 0.92), rgba(11, 16, 32, 0.96));
+            border-radius: 8px;
+            box-shadow: 0 0 22px rgba(88, 213, 255, 0.07);
+        }
+        .metric-card {
+            min-height: 118px;
+            padding: 15px 15px 12px;
+        }
+        .metric-label {
+            color: var(--muted);
+            font-size: .82rem;
+            margin-bottom: 8px;
+        }
+        .metric-value {
+            color: var(--text);
+            font-size: clamp(1.15rem, 2.1vw, 1.9rem);
+            font-weight: 700;
+            line-height: 1.1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .metric-delta {
+            margin-top: 8px;
+            font-size: .82rem;
+        }
+        .panel {
+            padding: 15px;
+            margin-bottom: 13px;
+        }
+        .panel-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 10px;
+            color: var(--text);
+            font-weight: 650;
+        }
+        .panel-subtitle {
+            color: var(--muted);
+            font-size: .82rem;
+            font-weight: 400;
+        }
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(88, 213, 255, 0.28);
+            color: var(--blue);
+            background: rgba(88, 213, 255, 0.08);
+            font-size: .74rem;
+            margin: 0 5px 5px 0;
+        }
+        .risk-high {
+            color: #FCA5A5;
+            border-color: rgba(239, 68, 68, 0.36);
+            background: rgba(239, 68, 68, 0.10);
+        }
+        .risk-mid {
+            color: #FDE68A;
+            border-color: rgba(251, 191, 36, 0.36);
+            background: rgba(251, 191, 36, 0.10);
+        }
+        .risk-low {
+            color: #86EFAC;
+            border-color: rgba(34, 197, 94, 0.36);
+            background: rgba(34, 197, 94, 0.10);
+        }
+        .signal-card, .result-card {
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .result-card strong {
+            color: var(--text);
+        }
+        .small-muted {
+            color: var(--muted);
+            font-size: .82rem;
+        }
+        .terminal-line {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            color: #C7D2FE;
+            font-size: .82rem;
+        }
+        .dataframe {
+            border-radius: 8px;
+        }
+        div[data-testid="stDataFrame"] {
+            border: 1px solid rgba(88, 213, 255, 0.12);
+            border-radius: 8px;
+        }
+        .stButton button, .stDownloadButton button {
+            border-radius: 8px;
+            border: 1px solid rgba(88, 213, 255, 0.36);
+            background: rgba(88, 213, 255, 0.10);
+            color: var(--text);
+        }
+        .stButton button:hover, .stDownloadButton button:hover {
+            border-color: rgba(88, 213, 255, 0.8);
+            background: rgba(88, 213, 255, 0.18);
+            color: white;
+        }
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div,
+        textarea {
+            border-radius: 8px !important;
+            border-color: rgba(88, 213, 255, 0.24) !important;
+            background-color: rgba(11, 16, 32, 0.88) !important;
+        }
+        @media (max-width: 820px) {
+            .metric-card {
+                min-height: 100px;
+            }
+            .hero {
+                padding: 14px;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def init_state() -> None:
+    defaults = {
+        "positions": DEFAULT_POSITIONS.copy(),
+        "watchlist": ["515030", "512480", "510300", "518880", "513100"],
+        "custom_modules": pd.DataFrame(
+            columns=["module_id", "module_name", "fund_code", "fund_name", "created_at"]
+        ),
+        "selected_fund": "515030",
+        "data_mode": "东方财富优先 + 演示兜底",
+        "refresh_frequency": "手动刷新",
+        "last_refresh_ts": time.time(),
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+def fmt_money(value: float, digits: int = 2) -> str:
+    if pd.isna(value):
+        return "--"
+    sign = "-" if value < 0 else ""
+    value = abs(float(value))
+    if value >= 1e8:
+        return f"{sign}{value / 1e8:.{digits}f}亿"
+    if value >= 1e4:
+        return f"{sign}{value / 1e4:.{digits}f}万"
+    return f"{sign}{value:.{digits}f}"
+
+
+def fmt_pct(value: float, digits: int = 2) -> str:
+    if pd.isna(value):
+        return "--"
+    return f"{float(value):+.{digits}f}%"
+
+
+def fmt_num(value: float, digits: int = 3) -> str:
+    if pd.isna(value):
+        return "--"
+    return f"{float(value):.{digits}f}"
+
+
+def badge(text: str, tone: str = "info") -> str:
+    css = {"high": "risk-high", "mid": "risk-mid", "low": "risk-low"}.get(tone, "")
+    return f'<span class="pill {css}">{text}</span>'
+
+
+def section_title(title: str, subtitle: str = "") -> None:
+    subtitle_html = f'<span class="panel-subtitle">{subtitle}</span>' if subtitle else ""
+    st.markdown(
+        f'<div class="panel-title"><span>{title}</span>{subtitle_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_hero() -> None:
     st.markdown(
         f"""
-        <div class="section-shell">
-            <div class="section-note">
-            当前模块：{module_name}；实时行情：{spot_source}；历史行情：{hist_source}；
-            历史数据最后日期：{latest['日期'].strftime('%Y-%m-%d') if pd.notna(latest['日期']) else '未知'}
-            </div>
+        <div class="hero">
+            <h1>{APP_NAME}｜基金智能驾驶舱</h1>
+            <p>{APP_SUBTITLE}</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["看盘图", "自动解读", "持仓导入", "模块行情池", "信号明细", "全模块速览"])
 
-    with tab1:
-        st.markdown(
-            f"""
-            <div class="section-shell">
-                <div class="section-title">{real_name}（{selected_code}）</div>
-                <div class="section-note">均线结构、成交额变化与资金行为代理信号。图中信号来自价格、成交额与OBV的组合判断。</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.plotly_chart(draw_professional_chart(hist), use_container_width=True)
+def render_metric_card(label: str, value: str, delta: str = "", tone: str = "info") -> None:
+    color = {
+        "green": THEME["green"],
+        "red": THEME["red"],
+        "yellow": THEME["yellow"],
+        "purple": THEME["purple"],
+        "info": THEME["blue"],
+    }.get(tone, THEME["blue"])
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            <div class="metric-delta" style="color:{color};">{delta}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with tab2:
-        left, right = st.columns([1.2, 1])
-        with left:
-            st.markdown(
-                f"""
-                <div class="signal-card">
-                    <strong>自动分析结论</strong>
-                    <div class="signal-text">{summary["comment"].replace(chr(10), "<br>")}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+
+def normalize_code(code: Any) -> str:
+    if pd.isna(code):
+        return ""
+    raw = str(code).strip().replace(".0", "")
+    digits = re.sub(r"\D", "", raw)
+    return digits.zfill(6)[-6:] if digits else raw[:6]
+
+
+def infer_market(code: str) -> str:
+    code = normalize_code(code)
+    if code.startswith(("5", "6", "9")):
+        return "SH"
+    if code.startswith(("0", "1", "2", "3")):
+        return "SZ"
+    return "FUND"
+
+
+def secid_for_code(code: str) -> str:
+    market = infer_market(code)
+    prefix = "1" if market == "SH" else "0"
+    return f"{prefix}.{normalize_code(code)}"
+
+
+def safe_float(value: Any, default: float = np.nan) -> float:
+    try:
+        if value in (None, "-", ""):
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+@st.cache_data(ttl=60 * 60)
+def base_catalog() -> pd.DataFrame:
+    df = pd.DataFrame(FUND_SEEDS).copy()
+    df["fund_code"] = df["fund_code"].map(normalize_code)
+    df["search_text"] = (
+        df["fund_code"]
+        + " "
+        + df["fund_name"]
+        + " "
+        + df["module_level_1"]
+        + " "
+        + df["module_level_2"]
+    ).str.lower()
+    return df
+
+
+def build_catalog() -> pd.DataFrame:
+    catalog = base_catalog().copy()
+    custom = st.session_state.get("custom_modules", pd.DataFrame())
+    if not custom.empty:
+        custom_rows = []
+        for _, row in custom.iterrows():
+            code = normalize_code(row.get("fund_code", ""))
+            if not code:
+                continue
+            known = catalog[catalog["fund_code"] == code]
+            fund_name = row.get("fund_name") or (known.iloc[0]["fund_name"] if not known.empty else f"自定义基金{code}")
+            custom_rows.append(
+                {
+                    "fund_code": code,
+                    "fund_name": fund_name,
+                    "module_level_1": "用户自定义模块",
+                    "module_level_2": row.get("module_name", "自定义"),
+                    "market": infer_market(code),
+                    "asset_type": "自定义",
+                    "risk_level": "待评估",
+                    "search_text": f"{code} {fund_name} 用户自定义模块 {row.get('module_name', '')}".lower(),
+                }
             )
-            st.markdown(
-                """
-                <div class="signal-card">
-                    <strong>信号解释</strong>
-                    <div class="signal-text">
-                    <span class="good">强流入</span>：上涨幅度较大，同时成交额明显放大，OBV强于短期均值。<br>
-                    <span class="bad">强撤出</span>：下跌幅度较大，同时成交额明显放大，OBV弱于短期均值。<br>
-                    <span class="warn">分歧放量</span>：涨跌不大但成交额明显放大，说明多空分歧增强。<br>
-                    <span class="neutral">缩量观望</span>：成交额低于近期均值，说明资金参与度不足。
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with right:
-            key_df = pd.DataFrame({
-                "指标": ["收盘价/净值", "MA5", "MA20", "MA60", "相对MA5偏离", "相对MA20偏离", "相对MA60偏离", "成交额", "成交额MA20", "量能倍率", "资金行为强度"],
-                "数值": [
-                    f"{latest['收盘']:.4f}",
-                    f"{latest['MA5']:.4f}" if pd.notna(latest["MA5"]) else "暂无",
-                    f"{latest['MA20']:.4f}" if pd.notna(latest["MA20"]) else "暂无",
-                    f"{latest['MA60']:.4f}" if pd.notna(latest["MA60"]) else "暂无",
-                    format_pct(latest["均线偏离_MA5"]),
-                    format_pct(latest["均线偏离_MA20"]),
-                    format_pct(latest["均线偏离_MA60"]),
-                    format_money(latest["成交额"]),
-                    format_money(latest["成交额_MA20"]),
-                    f"{latest['量能倍率']:.2f}x" if pd.notna(latest["量能倍率"]) else "暂无",
-                    f"{latest['资金行为强度']:.2f}" if pd.notna(latest["资金行为强度"]) else "暂无",
-                ],
-            })
-            st.dataframe(key_df, use_container_width=True, hide_index=True)
+        if custom_rows:
+            catalog = pd.concat([catalog, pd.DataFrame(custom_rows)], ignore_index=True)
+    return catalog
 
-    with tab3:
-        st.markdown(
-            """
-            <div class="section-shell">
-                <div class="section-title">持仓截图导入与今日盈亏估算</div>
-                <div class="section-note">上传基金持仓页截图后，系统会尽量识别6位基金/ETF代码与持仓金额。识别结果可手动修正，最终盈亏按“持仓金额 × 当日涨跌幅”估算。</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+
+def find_fund_meta(code: str, catalog: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    code = normalize_code(code)
+    catalog = build_catalog() if catalog is None else catalog
+    hit = catalog[catalog["fund_code"] == code]
+    if not hit.empty:
+        return hit.iloc[0].to_dict()
+    return {
+        "fund_code": code,
+        "fund_name": f"自查基金{code}",
+        "module_level_1": "用户自查",
+        "module_level_2": "未归类",
+        "market": infer_market(code),
+        "asset_type": "自查",
+        "risk_level": "待评估",
+        "search_text": code,
+    }
+
+
+def search_funds(query: str, catalog: Optional[pd.DataFrame] = None, limit: int = 30) -> pd.DataFrame:
+    catalog = build_catalog() if catalog is None else catalog
+    q = (query or "").strip().lower()
+    if not q:
+        return catalog.head(limit).copy()
+    mask = catalog["search_text"].str.contains(re.escape(q), case=False, na=False)
+    result = catalog[mask].copy()
+    if len(q) == 6 and q.isdigit() and normalize_code(q) not in set(result["fund_code"]):
+        meta = find_fund_meta(q, catalog)
+        result = pd.concat([pd.DataFrame([meta]), result], ignore_index=True)
+    return result.head(limit)
+
+
+@st.cache_data(ttl=10 * 60, show_spinner=False)
+def fetch_etf_kline(code: str, days: int = 420) -> pd.DataFrame:
+    code = normalize_code(code)
+    end = datetime.today().strftime("%Y%m%d")
+    beg = (datetime.today() - timedelta(days=max(days * 2, 800))).strftime("%Y%m%d")
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    params = {
+        "secid": secid_for_code(code),
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": "1",
+        "beg": beg,
+        "end": end,
+    }
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, params=params, headers=headers, timeout=8)
+    resp.raise_for_status()
+    payload = resp.json()
+    klines = payload.get("data", {}).get("klines") or []
+    rows = []
+    for item in klines:
+        parts = item.split(",")
+        if len(parts) < 11:
+            continue
+        rows.append(
+            {
+                "date": pd.to_datetime(parts[0]),
+                "open": safe_float(parts[1]),
+                "close": safe_float(parts[2]),
+                "high": safe_float(parts[3]),
+                "low": safe_float(parts[4]),
+                "volume": safe_float(parts[5]),
+                "amount": safe_float(parts[6]),
+                "amplitude": safe_float(parts[7]),
+                "pct_change": safe_float(parts[8]),
+                "change": safe_float(parts[9]),
+                "turnover": safe_float(parts[10]),
+                "source": "东方财富ETF/场内行情",
+            }
         )
-        uploaded = st.file_uploader("上传持仓截图", type=["png", "jpg", "jpeg", "webp"])
-        manual_text = ""
-        recognized_df = pd.DataFrame(columns=["代码", "名称", "持仓金额", "识别来源"])
-        if uploaded:
-            image = Image.open(uploaded)
-            st.image(image, caption="已上传的持仓截图", use_container_width=True)
-            ocr_text, ocr_source = ocr_image_to_text(image)
-            st.caption(f"OCR状态：{ocr_source}")
-            manual_text = st.text_area("识别文本，可在这里修正后重新解析", value=ocr_text, height=160)
-            recognized_df = extract_holdings_from_text(manual_text)
-        else:
-            manual_text = st.text_area("也可以直接粘贴持仓页文字", placeholder="示例：新能源车ETF 515030 持仓金额 12000.00", height=140)
-            if manual_text.strip():
-                recognized_df = extract_holdings_from_text(manual_text)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise ValueError("empty kline")
+    return df.dropna(subset=["date", "close"]).tail(days).reset_index(drop=True)
 
-        if recognized_df.empty:
-            recognized_df = pd.DataFrame([{"代码": selected_code, "名称": real_name, "持仓金额": np.nan, "识别来源": "手动补充"}])
 
-        edited = st.data_editor(
-            recognized_df,
+@st.cache_data(ttl=30 * 60, show_spinner=False)
+def fetch_fund_nav(code: str, days: int = 420) -> pd.DataFrame:
+    code = normalize_code(code)
+    url = f"https://fund.eastmoney.com/pingzhongdata/{code}.js"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, params={"v": int(time.time() * 1000)}, headers=headers, timeout=8)
+    resp.raise_for_status()
+    text = resp.text
+    name_match = re.search(r'var fS_name = "([^"]+)"', text)
+    trend_match = re.search(r"var Data_netWorthTrend = (\[.*?\]);", text, re.S)
+    if not trend_match:
+        raise ValueError("empty fund nav")
+    records = json.loads(trend_match.group(1))
+    rows = []
+    for item in records:
+        close = safe_float(item.get("y"))
+        pct = safe_float(item.get("equityReturn"), 0.0)
+        dt = pd.to_datetime(item.get("x"), unit="ms", errors="coerce")
+        if pd.isna(dt) or pd.isna(close):
+            continue
+        rows.append(
+            {
+                "date": dt,
+                "open": close,
+                "close": close,
+                "high": close,
+                "low": close,
+                "volume": 0.0,
+                "amount": 0.0,
+                "amplitude": abs(pct),
+                "pct_change": pct,
+                "change": np.nan,
+                "turnover": np.nan,
+                "source": "东方财富场外基金净值",
+                "fund_name_remote": name_match.group(1) if name_match else "",
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise ValueError("empty nav df")
+    df["amount"] = synthetic_amount_series(code, len(df), df["pct_change"].to_numpy())
+    df["volume"] = df["amount"] / df["close"].replace(0, np.nan)
+    return df.dropna(subset=["date", "close"]).tail(days).reset_index(drop=True)
+
+
+def synthetic_amount_series(code: str, n: int, pct_change: np.ndarray) -> np.ndarray:
+    seed = int(normalize_code(code) or "1") % (2**32 - 1)
+    rng = np.random.default_rng(seed)
+    base = rng.uniform(4.5e7, 9.5e8)
+    noise = rng.normal(1.0, 0.18, n).clip(0.32, 2.4)
+    momentum = 1 + np.abs(np.nan_to_num(pct_change)) / 7
+    return base * noise * momentum
+
+
+@st.cache_data(ttl=60 * 60, show_spinner=False)
+def synthetic_history(code: str, days: int = 420) -> pd.DataFrame:
+    code = normalize_code(code)
+    seed = int(code or "1") % (2**32 - 1)
+    rng = np.random.default_rng(seed)
+    end = pd.Timestamp.today().normalize()
+    dates = pd.bdate_range(end=end, periods=days)
+    base_price = 0.65 + (seed % 700) / 170.0
+    drift = ((seed % 17) - 8) / 10000
+    volatility = 0.010 + ((seed % 13) / 1000)
+    shocks = rng.normal(drift, volatility, len(dates))
+    trend_wave = np.sin(np.linspace(0, 8 * np.pi, len(dates))) * volatility * 0.25
+    returns = shocks + trend_wave
+    close = base_price * np.exp(np.cumsum(returns))
+    open_ = close * (1 + rng.normal(0, 0.004, len(dates)))
+    high = np.maximum(open_, close) * (1 + rng.random(len(dates)) * 0.014)
+    low = np.minimum(open_, close) * (1 - rng.random(len(dates)) * 0.014)
+    pct_change = pd.Series(close).pct_change().fillna(0).to_numpy() * 100
+    amount = synthetic_amount_series(code, len(dates), pct_change)
+    volume = amount / close
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "close": close,
+            "high": high,
+            "low": low,
+            "volume": volume,
+            "amount": amount,
+            "amplitude": (high - low) / close * 100,
+            "pct_change": pct_change,
+            "change": np.r_[0, np.diff(close)],
+            "turnover": rng.uniform(0.4, 5.0, len(dates)),
+            "source": "离线演示行情",
+        }
+    )
+
+
+@st.cache_data(ttl=10 * 60, show_spinner=False)
+def load_price_history(code: str, days: int = 420, data_mode: str = "") -> pd.DataFrame:
+    code = normalize_code(code)
+    if "仅演示" not in data_mode:
+        try:
+            if infer_market(code) in {"SH", "SZ"}:
+                return fetch_etf_kline(code, days)
+        except Exception:
+            pass
+        try:
+            return fetch_fund_nav(code, days)
+        except Exception:
+            pass
+    return synthetic_history(code, days)
+
+
+def enrich_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy().sort_values("date").reset_index(drop=True)
+    for window in [5, 20, 60]:
+        out[f"ma{window}"] = out["close"].rolling(window, min_periods=max(2, window // 3)).mean()
+    out["amount_ma20"] = out["amount"].rolling(20, min_periods=5).mean()
+    out["volume_ratio"] = out["amount"] / out["amount_ma20"].replace(0, np.nan)
+    direction = np.sign(out["close"].diff().fillna(0))
+    out["obv"] = (direction * out["volume"].fillna(0)).cumsum()
+    out["obv_ma10"] = out["obv"].rolling(10, min_periods=3).mean()
+    out["ma20_deviation"] = (out["close"] / out["ma20"] - 1) * 100
+    out["trend_score"] = out.apply(calc_trend_score, axis=1)
+    out["trend_label"] = out["trend_score"].map(trend_label)
+    out["risk_label"] = out["ma20_deviation"].map(risk_label)
+    out["money_strength"] = calc_money_strength(out)
+    out["money_signal"] = out.apply(classify_money_signal, axis=1)
+    out["action_label"] = out.apply(action_label, axis=1)
+    return out
+
+
+def calc_trend_score(row: pd.Series) -> int:
+    score = 0
+    close = row.get("close", np.nan)
+    ma5 = row.get("ma5", np.nan)
+    ma20 = row.get("ma20", np.nan)
+    ma60 = row.get("ma60", np.nan)
+    if pd.notna(close) and pd.notna(ma5) and close > ma5:
+        score += 1
+    if pd.notna(close) and pd.notna(ma20) and close > ma20:
+        score += 1
+    if pd.notna(close) and pd.notna(ma60) and close > ma60:
+        score += 1
+    if pd.notna(ma5) and pd.notna(ma20) and ma5 > ma20:
+        score += 1
+    if pd.notna(ma20) and pd.notna(ma60) and ma20 > ma60:
+        score += 1
+    return int(score)
+
+
+def trend_label(score: int) -> str:
+    if score >= 5:
+        return "强趋势"
+    if score == 4:
+        return "趋势偏强"
+    if score == 3:
+        return "趋势修复"
+    if score == 2:
+        return "震荡偏弱"
+    return "趋势偏弱"
+
+
+def risk_label(deviation: float) -> str:
+    if pd.isna(deviation):
+        return "待观察"
+    if deviation > 8:
+        return "短期过热"
+    if deviation > 4:
+        return "略偏高"
+    if deviation >= -4:
+        return "正常波动"
+    if deviation >= -8:
+        return "回调区"
+    return "深度回调"
+
+
+def calc_money_strength(df: pd.DataFrame) -> pd.Series:
+    pct_part = df["pct_change"].fillna(0).clip(-6, 6) / 6
+    vol_part = (df["volume_ratio"].fillna(1) - 1).clip(-1.2, 1.8) / 1.8
+    obv_delta = (df["obv"] - df["obv_ma10"]).fillna(0)
+    obv_part = np.sign(obv_delta) * np.minimum(np.abs(obv_delta) / (df["volume"].rolling(20, min_periods=5).mean().replace(0, np.nan)), 1)
+    obv_part = pd.Series(obv_part).fillna(0).to_numpy()
+    strength = (pct_part * 55 + vol_part * 30 + obv_part * 15).clip(-100, 100)
+    return pd.Series(strength, index=df.index)
+
+
+def classify_money_signal(row: pd.Series) -> str:
+    pct = safe_float(row.get("pct_change"), 0)
+    vr = safe_float(row.get("volume_ratio"), 1)
+    strength = safe_float(row.get("money_strength"), 0)
+    if abs(pct) <= 0.6 and vr >= 1.55:
+        return "分歧放量"
+    if pct > 0 and vr >= 1.5 and strength > 28:
+        return "强流入"
+    if pct > 0 and vr >= 1.1:
+        return "温和流入"
+    if pct < 0 and vr >= 1.5 and strength < -28:
+        return "强撤出"
+    if pct < 0 and vr >= 1.1:
+        return "温和撤出"
+    if vr < 0.75:
+        return "缩量观望"
+    return "中性"
+
+
+def action_label(row: pd.Series) -> str:
+    trend = int(row.get("trend_score", 0))
+    risk = row.get("risk_label", "")
+    money = row.get("money_signal", "")
+    if risk == "短期过热" and trend >= 4:
+        return "进入止盈观察区"
+    if trend >= 4 and money in {"强流入", "温和流入", "中性"}:
+        return "适合继续持有"
+    if trend == 3 and risk in {"正常波动", "回调区"}:
+        return "等待回踩确认"
+    if trend <= 2 and money in {"强撤出", "温和撤出"}:
+        return "需要减仓防守"
+    if risk in {"略偏高", "短期过热"}:
+        return "不宜追高"
+    if risk in {"回调区", "深度回调"} and trend >= 2:
+        return "适合小额定投观察"
+    return "趋势破位谨慎" if trend <= 1 else "继续观察"
+
+
+@st.cache_data(ttl=10 * 60, show_spinner=False)
+def analyze_fund_cached(code: str, data_mode: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    code = normalize_code(code)
+    raw = load_price_history(code, 420, data_mode)
+    enriched = enrich_indicators(raw)
+    latest = enriched.iloc[-1].to_dict()
+    return enriched, latest
+
+
+def analyze_fund(code: str, catalog: Optional[pd.DataFrame] = None) -> Tuple[pd.DataFrame, FundSnapshot]:
+    catalog = build_catalog() if catalog is None else catalog
+    meta = find_fund_meta(code, catalog)
+    df, latest = analyze_fund_cached(meta["fund_code"], st.session_state.get("data_mode", ""))
+    latest_name = df.iloc[-1].get("fund_name_remote", "") if "fund_name_remote" in df.columns else ""
+    fund_name = meta.get("fund_name") or latest_name or f"基金{meta['fund_code']}"
+    snapshot = FundSnapshot(
+        fund_code=meta["fund_code"],
+        fund_name=fund_name,
+        module_level_1=meta.get("module_level_1", "用户自查"),
+        module_level_2=meta.get("module_level_2", "未归类"),
+        close=safe_float(latest.get("close")),
+        pct_change=safe_float(latest.get("pct_change"), 0),
+        amount=safe_float(latest.get("amount"), 0),
+        volume_ratio=safe_float(latest.get("volume_ratio"), 1),
+        trend_score=int(latest.get("trend_score", 0)),
+        trend_label=str(latest.get("trend_label", "待观察")),
+        money_signal=str(latest.get("money_signal", "中性")),
+        risk_label=str(latest.get("risk_label", "待观察")),
+        action_label=str(latest.get("action_label", "继续观察")),
+        ma20_deviation=safe_float(latest.get("ma20_deviation"), 0),
+        source=str(latest.get("source", "未知")),
+    )
+    return df, snapshot
+
+
+def snapshot_row(code: str, catalog: Optional[pd.DataFrame] = None) -> Dict[str, Any]:
+    _, snap = analyze_fund(code, catalog)
+    return {
+        "模块": snap.module_level_1,
+        "细分": snap.module_level_2,
+        "基金名称": snap.fund_name,
+        "基金代码": snap.fund_code,
+        "当前价格": snap.close,
+        "今日涨跌幅": snap.pct_change,
+        "成交额": snap.amount,
+        "量能倍率": snap.volume_ratio,
+        "趋势评分": snap.trend_score,
+        "趋势状态": snap.trend_label,
+        "资金信号": snap.money_signal,
+        "风险状态": snap.risk_label,
+        "操作提示": snap.action_label,
+        "数据源": snap.source,
+    }
+
+
+def build_pool_snapshot(catalog: pd.DataFrame, codes: Iterable[str], limit: int = 40) -> pd.DataFrame:
+    rows = []
+    seen = set()
+    for code in list(codes)[:limit]:
+        code = normalize_code(code)
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        try:
+            rows.append(snapshot_row(code, catalog))
+        except Exception:
+            continue
+    return pd.DataFrame(rows)
+
+
+def find_alias_column(df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
+    normalized = {str(c).strip().lower(): c for c in df.columns}
+    for alias in aliases:
+        key = alias.strip().lower()
+        if key in normalized:
+            return normalized[key]
+    for col in df.columns:
+        col_text = str(col).strip().lower()
+        if any(alias.lower() in col_text for alias in aliases):
+            return col
+    return None
+
+
+def standardize_positions(raw: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame()
+    for target, aliases in COLUMN_ALIASES.items():
+        col = find_alias_column(raw, aliases)
+        if col is not None:
+            out[target] = raw[col]
+    for col, default in [
+        ("fund_code", ""),
+        ("fund_name", ""),
+        ("shares", 0.0),
+        ("cost_price", 0.0),
+        ("buy_date", ""),
+        ("account_type", "默认账户"),
+        ("notes", ""),
+    ]:
+        if col not in out.columns:
+            out[col] = default
+    out["fund_code"] = out["fund_code"].map(normalize_code)
+    out["fund_name"] = out["fund_name"].fillna("").astype(str)
+    out["shares"] = pd.to_numeric(out["shares"], errors="coerce").fillna(0)
+    out["cost_price"] = pd.to_numeric(out["cost_price"], errors="coerce").fillna(0)
+    out["buy_date"] = pd.to_datetime(out["buy_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    out["buy_date"] = out["buy_date"].replace("NaT", "")
+    out["account_type"] = out["account_type"].fillna("默认账户").astype(str)
+    out["notes"] = out["notes"].fillna("").astype(str)
+    out = out[out["fund_code"].str.len() == 6].copy()
+    out = out.reset_index(drop=True)
+    return out[["fund_code", "fund_name", "shares", "cost_price", "buy_date", "account_type", "notes"]]
+
+
+def portfolio_positions(catalog: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    catalog = build_catalog() if catalog is None else catalog
+    positions = st.session_state.get("positions", pd.DataFrame()).copy()
+    if positions.empty:
+        return positions
+    positions = standardize_positions(positions)
+    rows = []
+    for idx, pos in positions.iterrows():
+        code = normalize_code(pos["fund_code"])
+        meta = find_fund_meta(code, catalog)
+        try:
+            _, snap = analyze_fund(code, catalog)
+            current_price = snap.close
+            pct_change = snap.pct_change
+            trend = snap.trend_label
+            money = snap.money_signal
+            action = snap.action_label
+            risk = snap.risk_label
+        except Exception:
+            current_price = np.nan
+            pct_change = 0
+            trend = money = action = risk = "待观察"
+        shares = safe_float(pos["shares"], 0)
+        cost_price = safe_float(pos["cost_price"], 0)
+        current_value = shares * current_price if pd.notna(current_price) else 0
+        cost_value = shares * cost_price
+        pnl = current_value - cost_value
+        ret = pnl / cost_value * 100 if cost_value > 0 else np.nan
+        buy_dt = pd.to_datetime(pos["buy_date"], errors="coerce")
+        hold_days = (pd.Timestamp.today().normalize() - buy_dt).days if pd.notna(buy_dt) else np.nan
+        rows.append(
+            {
+                "position_id": idx + 1,
+                "基金代码": code,
+                "基金名称": pos["fund_name"] or meta["fund_name"],
+                "模块": meta.get("module_level_1", "用户自查"),
+                "细分": meta.get("module_level_2", "未归类"),
+                "持仓份额": shares,
+                "成本价": cost_price,
+                "当前价": current_price,
+                "持仓金额": current_value,
+                "持仓成本": cost_value,
+                "浮盈亏": pnl,
+                "收益率": ret,
+                "今日涨跌幅": pct_change,
+                "持仓天数": hold_days,
+                "趋势状态": trend,
+                "资金信号": money,
+                "风险状态": risk,
+                "操作提示": action,
+                "账户类型": pos["account_type"],
+                "备注": pos["notes"],
+            }
+        )
+    df = pd.DataFrame(rows)
+    total_value = df["持仓金额"].sum()
+    df["仓位占比"] = np.where(total_value > 0, df["持仓金额"] / total_value * 100, 0)
+    return df
+
+
+def portfolio_summary(pos_df: pd.DataFrame) -> Dict[str, Any]:
+    if pos_df.empty:
+        return {
+            "total_value": 0,
+            "total_cost": 0,
+            "total_pnl": 0,
+            "total_ret": 0,
+            "today_pnl": 0,
+            "fund_count": 0,
+            "risk_level": "待导入",
+            "strong_modules": 0,
+            "max_fund_weight": 0,
+            "max_module_weight": 0,
+            "risk_score": 0,
+        }
+    total_value = pos_df["持仓金额"].sum()
+    total_cost = pos_df["持仓成本"].sum()
+    total_pnl = total_value - total_cost
+    total_ret = total_pnl / total_cost * 100 if total_cost > 0 else 0
+    today_pnl = (pos_df["持仓金额"] * pos_df["今日涨跌幅"].fillna(0) / 100).sum()
+    fund_count = pos_df["基金代码"].nunique()
+    max_fund_weight = pos_df["仓位占比"].max()
+    module_weight = pos_df.groupby("模块")["持仓金额"].sum() / total_value * 100 if total_value > 0 else pd.Series(dtype=float)
+    max_module_weight = module_weight.max() if not module_weight.empty else 0
+    hot_funds = (pos_df["风险状态"].isin(["短期过热", "略偏高"]) & (pos_df["仓位占比"] > 12)).sum()
+    weak_funds = (pos_df["趋势状态"].isin(["趋势偏弱", "震荡偏弱"]) & (pos_df["仓位占比"] > 10)).sum()
+    risk_score = min(100, max_module_weight * 0.55 + max_fund_weight * 0.35 + hot_funds * 8 + weak_funds * 10)
+    risk_level_value = "高" if risk_score >= 65 else "中" if risk_score >= 35 else "低"
+    strong_modules = pos_df[pos_df["趋势状态"].isin(["强趋势", "趋势偏强"])]["模块"].nunique()
+    return {
+        "total_value": total_value,
+        "total_cost": total_cost,
+        "total_pnl": total_pnl,
+        "total_ret": total_ret,
+        "today_pnl": today_pnl,
+        "fund_count": fund_count,
+        "risk_level": risk_level_value,
+        "strong_modules": strong_modules,
+        "max_fund_weight": max_fund_weight,
+        "max_module_weight": max_module_weight,
+        "risk_score": risk_score,
+    }
+
+
+def build_portfolio_curve(pos_df: pd.DataFrame, catalog: pd.DataFrame, days: int = 120) -> pd.DataFrame:
+    if pos_df.empty:
+        return pd.DataFrame()
+    pieces = []
+    for _, row in pos_df.iterrows():
+        code = row["基金代码"]
+        shares = row["持仓份额"]
+        try:
+            hist, _ = analyze_fund(code, catalog)
+            part = hist[["date", "close"]].tail(days).copy()
+            part[code] = part["close"] * shares
+            pieces.append(part[["date", code]])
+        except Exception:
+            continue
+    if not pieces:
+        return pd.DataFrame()
+    curve = pieces[0]
+    for part in pieces[1:]:
+        curve = curve.merge(part, on="date", how="outer")
+    curve = curve.sort_values("date").ffill().dropna(how="all", subset=[c for c in curve.columns if c != "date"])
+    value_cols = [c for c in curve.columns if c != "date"]
+    curve["组合市值"] = curve[value_cols].sum(axis=1)
+    curve["累计收益率"] = (curve["组合市值"] / curve["组合市值"].iloc[0] - 1) * 100
+    return curve[["date", "组合市值", "累计收益率"]]
+
+
+def make_price_chart(df: pd.DataFrame, title: str) -> go.Figure:
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.54, 0.25, 0.21],
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": False}]],
+    )
+    fig.add_trace(go.Scatter(x=df["date"], y=df["close"], name="价格/净值", line=dict(color="#F8FAFC", width=2)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df["date"], y=df["ma5"], name="MA5", line=dict(color="#58D5FF", width=1.4)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df["date"], y=df["ma20"], name="MA20", line=dict(color="#FBBF24", width=1.4)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df["date"], y=df["ma60"], name="MA60", line=dict(color="#A78BFA", width=1.4)), row=1, col=1)
+    amount_colors = np.where(df["pct_change"].fillna(0) >= 0, "#22C55E", "#EF4444")
+    fig.add_trace(go.Bar(x=df["date"], y=df["amount"], name="成交额", marker_color=amount_colors, opacity=0.62), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df["date"], y=df["amount_ma20"], name="成交额MA20", line=dict(color="#58D5FF", width=1.2)), row=2, col=1)
+    strength_colors = np.where(df["money_strength"].fillna(0) >= 0, "#22C55E", "#EF4444")
+    fig.add_trace(go.Bar(x=df["date"], y=df["money_strength"], name="资金行为强度", marker_color=strength_colors, opacity=0.75), row=3, col=1)
+    strong_in = df[df["money_signal"] == "强流入"].tail(12)
+    strong_out = df[df["money_signal"] == "强撤出"].tail(12)
+    fig.add_trace(
+        go.Scatter(
+            x=strong_in["date"],
+            y=strong_in["close"],
+            mode="markers",
+            name="强流入",
+            marker=dict(symbol="triangle-up", size=10, color="#22C55E"),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=strong_out["date"],
+            y=strong_out["close"],
+            mode="markers",
+            name="强撤出",
+            marker=dict(symbol="triangle-down", size=10, color="#EF4444"),
+        ),
+        row=1,
+        col=1,
+    )
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        title=title,
+        height=660,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(5,8,22,0.86)",
+        margin=dict(l=20, r=20, t=48, b=20),
+        legend=dict(orientation="h", y=1.04, x=0, font=dict(size=11)),
+        hovermode="x unified",
+    )
+    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", row=1, col=1)
+    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", row=2, col=1, tickformat=".2s")
+    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", row=3, col=1, range=[-100, 100])
+    fig.update_xaxes(gridcolor="rgba(168,183,207,.08)")
+    return fig
+
+
+def make_portfolio_curve_chart(curve: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if not curve.empty:
+        fig.add_trace(
+            go.Scatter(
+                x=curve["date"],
+                y=curve["组合市值"],
+                mode="lines",
+                name="组合市值",
+                line=dict(color="#58D5FF", width=2.2),
+                fill="tozeroy",
+                fillcolor="rgba(88, 213, 255, 0.12)",
+            )
+        )
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        height=360,
+        margin=dict(l=18, r=18, t=28, b=18),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(5,8,22,0.72)",
+        legend=dict(orientation="h"),
+    )
+    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", tickformat=".2s")
+    fig.update_xaxes(gridcolor="rgba(168,183,207,.08)")
+    return fig
+
+
+def make_module_heatmap(pool_df: pd.DataFrame) -> go.Figure:
+    if pool_df.empty:
+        z = np.array([[0]])
+        x = ["暂无"]
+        y = ["暂无"]
+    else:
+        pivot = pool_df.pivot_table(index="模块", columns="细分", values="趋势评分", aggfunc="mean").fillna(0)
+        z = pivot.values
+        x = pivot.columns
+        y = pivot.index
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=x,
+            y=y,
+            colorscale=[
+                [0, "#111827"],
+                [0.25, "#26324A"],
+                [0.5, "#FBBF24"],
+                [0.75, "#22C55E"],
+                [1, "#58D5FF"],
+            ],
+            zmin=0,
+            zmax=5,
+            colorbar=dict(title="趋势"),
+        )
+    )
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        height=360,
+        margin=dict(l=18, r=18, t=28, b=18),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(5,8,22,0.72)",
+    )
+    return fig
+
+
+def make_module_radar(pos_df: pd.DataFrame) -> go.Figure:
+    if pos_df.empty:
+        values = [0, 0, 0, 0, 0, 0]
+    else:
+        total = max(pos_df["持仓金额"].sum(), 1)
+        trend_score = (
+            pos_df["趋势状态"].map({"强趋势": 100, "趋势偏强": 80, "趋势修复": 60, "震荡偏弱": 35, "趋势偏弱": 20}).fillna(50)
+            * pos_df["持仓金额"]
+            / total
+        ).sum()
+        money_score = (
+            pos_df["资金信号"].map({"强流入": 100, "温和流入": 78, "中性": 55, "缩量观望": 45, "分歧放量": 42, "温和撤出": 25, "强撤出": 10}).fillna(50)
+            * pos_df["持仓金额"]
+            / total
+        ).sum()
+        risk_score = (
+            pos_df["风险状态"].map({"正常波动": 90, "略偏高": 62, "短期过热": 38, "回调区": 60, "深度回调": 30, "待观察": 50}).fillna(50)
+            * pos_df["持仓金额"]
+            / total
+        ).sum()
+        balance_score = max(10, 100 - pos_df.groupby("模块")["持仓金额"].sum().max() / total * 100)
+        profit_score = min(100, max(0, 50 + pos_df["收益率"].fillna(0).mean() * 2))
+        volatility_score = max(10, 100 - pos_df["风险状态"].isin(["短期过热", "深度回调"]).mean() * 55)
+        values = [trend_score, money_score, risk_score, balance_score, profit_score, volatility_score]
+    labels = ["趋势结构", "资金行为", "风险位置", "仓位均衡", "收益贡献", "波动韧性"]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values + [values[0]],
+            theta=labels + [labels[0]],
+            fill="toself",
+            name="组合画像",
+            line=dict(color="#58D5FF", width=2),
+            fillcolor="rgba(88, 213, 255, 0.18)",
+        )
+    )
+    fig.update_layout(
+        template=PLOTLY_TEMPLATE,
+        height=360,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=30, b=20),
+        polar=dict(
+            bgcolor="rgba(5,8,22,0.65)",
+            radialaxis=dict(range=[0, 100], showticklabels=False, gridcolor="rgba(168,183,207,.14)"),
+            angularaxis=dict(gridcolor="rgba(168,183,207,.14)"),
+        ),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_structure_charts(pos_df: pd.DataFrame) -> Tuple[go.Figure, go.Figure, go.Figure]:
+    if pos_df.empty:
+        empty = pd.DataFrame({"分类": ["暂无"], "金额": [1]})
+        pie = px.pie(empty, names="分类", values="金额", template=PLOTLY_TEMPLATE)
+        bar = px.bar(empty, x="分类", y="金额", template=PLOTLY_TEMPLATE)
+        risk = px.bar(empty, x="分类", y="金额", template=PLOTLY_TEMPLATE)
+        return pie, bar, risk
+    module = pos_df.groupby("模块", as_index=False)["持仓金额"].sum().sort_values("持仓金额", ascending=False)
+    pie = px.pie(module, names="模块", values="持仓金额", hole=0.52, template=PLOTLY_TEMPLATE, color_discrete_sequence=px.colors.qualitative.Set3)
+    pie.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)")
+    sub = pos_df.groupby("细分", as_index=False)["持仓金额"].sum().sort_values("持仓金额", ascending=True).tail(12)
+    bar = px.bar(sub, x="持仓金额", y="细分", orientation="h", template=PLOTLY_TEMPLATE, color="持仓金额", color_continuous_scale="Blues")
+    bar.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(5,8,22,0.72)", showlegend=False)
+    risk_df = pos_df.groupby("风险状态", as_index=False)["持仓金额"].sum()
+    risk = px.bar(risk_df, x="风险状态", y="持仓金额", template=PLOTLY_TEMPLATE, color="风险状态", color_discrete_map={"短期过热": "#EF4444", "略偏高": "#FBBF24", "正常波动": "#22C55E", "回调区": "#A78BFA", "深度回调": "#EF4444"})
+    risk.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(5,8,22,0.72)", showlegend=False)
+    return pie, bar, risk
+
+
+def generate_fund_interpretation(snap: FundSnapshot, hist: pd.DataFrame, position: Optional[pd.Series] = None) -> str:
+    latest = hist.iloc[-1]
+    trend = (
+        f"该基金当前趋势评分为 {snap.trend_score}/5，处于「{snap.trend_label}」状态。"
+        f"价格相对 MA20 偏离 {snap.ma20_deviation:.2f}%，风险位置判断为「{snap.risk_label}」。"
+    )
+    money = (
+        f"成交额相对 20 日均额为 {snap.volume_ratio:.2f} 倍，资金行为信号为「{snap.money_signal}」。"
+        f"若后续资金强度连续转弱，需要降低对短期延续性的预期。"
+    )
+    risk = "当前位置适合以趋势线作为观察边界，重点看 MA20 得失、量能是否异常放大，以及资金信号是否从流入转为撤出。"
+    action = f"策略提示为「{snap.action_label}」。"
+    if snap.risk_label == "短期过热":
+        risk = "短期位置已经偏热，继续上涨时更适合做止盈观察，不适合在放量急涨后追高。"
+    elif snap.risk_label in {"回调区", "深度回调"}:
+        risk = "基金进入回调观察区，应优先确认趋势是否企稳；若仍在 MA20 下方运行，定投或加仓需要降低频率。"
+    if snap.money_signal in {"强撤出", "温和撤出"}:
+        action = "资金信号偏弱，若叠加跌破 MA20 或 MA60，应优先控制仓位与回撤。"
+    position_text = ""
+    if position is not None and not position.empty:
+        cost_price = safe_float(position.get("成本价"), np.nan)
+        ret = safe_float(position.get("收益率"), np.nan)
+        weight = safe_float(position.get("仓位占比"), np.nan)
+        if pd.notna(cost_price):
+            position_text = (
+                f"你的持仓成本为 {cost_price:.3f}，当前价格为 {snap.close:.3f}，"
+                f"浮动收益率约 {ret:.2f}%，组合仓位占比约 {weight:.1f}%。"
+            )
+            if ret > 20:
+                position_text += " 已进入较明显盈利区，可考虑保留核心仓位并分批锁定部分收益。"
+            elif ret < -10:
+                position_text += " 当前亏损幅度较大，需要复盘买入逻辑是否仍成立，避免用加仓替代风控。"
+            elif snap.close < cost_price and snap.trend_score <= 2:
+                position_text += " 当前价格低于成本且趋势偏弱，建议先观察趋势修复再考虑加仓。"
+    next_watch = (
+        f"下一步重点关注: 收盘价是否守住 MA20（{safe_float(latest.get('ma20')):.3f}）、"
+        f"量能倍率是否继续维持在 1.10 以上，以及资金信号是否重新回到流入侧。"
+    )
+    return "\n\n".join([trend, money, risk, position_text, action, next_watch]).strip()
+
+
+def generate_portfolio_diagnosis(pos_df: pd.DataFrame, summary: Dict[str, Any]) -> List[str]:
+    if pos_df.empty:
+        return ["尚未导入实仓。可以先使用模板导入，或在实仓管理页手动录入持仓。"]
+    notes = []
+    module_weight = pos_df.groupby("模块")["持仓金额"].sum().sort_values(ascending=False)
+    total = max(pos_df["持仓金额"].sum(), 1)
+    top_module = module_weight.index[0]
+    top_weight = module_weight.iloc[0] / total * 100
+    if top_weight > 50:
+        notes.append(f"当前组合中「{top_module}」仓位占比 {top_weight:.1f}%，单一模块集中度偏高。")
+    elif top_weight > 35:
+        notes.append(f"组合明显偏向「{top_module}」，仓位占比 {top_weight:.1f}%，需要关注市场风格切换。")
+    else:
+        notes.append(f"组合最大模块为「{top_module}」，仓位占比 {top_weight:.1f}%，结构相对可控。")
+    high_risk = pos_df[pos_df["风险状态"].isin(["短期过热", "略偏高"])]
+    if not high_risk.empty:
+        names = "、".join(high_risk.sort_values("仓位占比", ascending=False)["基金名称"].head(3))
+        notes.append(f"{names} 处于偏高或过热位置，适合进入止盈和回撤观察。")
+    weak = pos_df[pos_df["趋势状态"].isin(["趋势偏弱", "震荡偏弱"])]
+    if not weak.empty:
+        names = "、".join(weak.sort_values("仓位占比", ascending=False)["基金名称"].head(3))
+        notes.append(f"{names} 趋势结构偏弱，若继续跌破中期均线，应降低补仓冲动。")
+    overlap = pos_df.groupby("细分")["基金代码"].nunique()
+    overlap = overlap[overlap >= 2]
+    if not overlap.empty:
+        notes.append(f"存在底层资产可能重叠的细分方向: {'、'.join(overlap.index[:4])}，需要检查是否重复暴露。")
+    if {"电气电力与新能源", "半导体与芯片", "科技成长"}.intersection(set(module_weight.index)):
+        growth_weight = module_weight[module_weight.index.intersection(["电气电力与新能源", "半导体与芯片", "科技成长", "人工智能与数字经济"])].sum() / total * 100
+        if growth_weight > 45:
+            notes.append(f"成长风格暴露约 {growth_weight:.1f}%，市场波动放大时组合净值弹性会明显上升。")
+    if summary["risk_level"] == "高":
+        notes.append("组合风险等级偏高，建议保留核心仓位，降低同方向追涨型加仓。")
+    return notes
+
+
+def generate_alerts(pos_df: pd.DataFrame, catalog: pd.DataFrame) -> Dict[str, List[str]]:
+    alerts = {"今日需要关注": [], "风险升高": [], "可以继续观察": [], "建议复盘": []}
+    if pos_df.empty:
+        alerts["建议复盘"].append("尚未导入实仓，组合风险与收益归因无法计算。")
+        return alerts
+    total_value = max(pos_df["持仓金额"].sum(), 1)
+    module_weight = pos_df.groupby("模块")["持仓金额"].sum() / total_value * 100
+    for module, weight in module_weight.items():
+        if weight > 50:
+            alerts["风险升高"].append(f"{module} 模块仓位 {weight:.1f}%，超过 50% 集中度阈值。")
+    for _, row in pos_df.iterrows():
+        code = row["基金代码"]
+        try:
+            hist, snap = analyze_fund(code, catalog)
+            latest = hist.iloc[-1]
+            prev = hist.iloc[-2] if len(hist) > 1 else latest
+            if latest["close"] < latest["ma20"] and prev["close"] >= prev["ma20"]:
+                alerts["今日需要关注"].append(f"{row['基金名称']} 跌破 MA20，观察是否放量。")
+            if latest["ma5"] < latest["ma20"] and prev["ma5"] >= prev["ma20"]:
+                alerts["风险升高"].append(f"{row['基金名称']} 出现 MA5 下穿 MA20。")
+            if snap.ma20_deviation > 8:
+                alerts["风险升高"].append(f"{row['基金名称']} MA20 偏离 {snap.ma20_deviation:.1f}%，短期过热。")
+            last3 = hist.tail(3)
+            if len(last3) == 3 and (last3["pct_change"] < 0).all() and (last3["volume_ratio"] > 1.1).sum() >= 2:
+                alerts["风险升高"].append(f"{row['基金名称']} 近三日放量下跌，需要控制回撤。")
+            if row["仓位占比"] > 30:
+                alerts["风险升高"].append(f"{row['基金名称']} 单只仓位 {row['仓位占比']:.1f}%，超过 30%。")
+            if row["收益率"] > 20:
+                alerts["可以继续观察"].append(f"{row['基金名称']} 盈利 {row['收益率']:.1f}%，进入止盈观察区。")
+            if row["收益率"] < -10:
+                alerts["建议复盘"].append(f"{row['基金名称']} 亏损 {abs(row['收益率']):.1f}%，需要复盘买入逻辑。")
+            if row["当前价"] < row["成本价"]:
+                alerts["建议复盘"].append(f"{row['基金名称']} 已跌破成本价。")
+            if snap.action_label in {"适合继续持有", "等待回踩确认"}:
+                alerts["可以继续观察"].append(f"{row['基金名称']} 当前策略标签: {snap.action_label}。")
+        except Exception:
+            continue
+    for key in alerts:
+        if not alerts[key]:
+            alerts[key].append("暂无触发项。")
+        alerts[key] = alerts[key][:6]
+    return alerts
+
+
+def render_sidebar(catalog: pd.DataFrame) -> str:
+    with st.sidebar:
+        st.markdown(f"### {APP_NAME}")
+        st.caption("基金智能驾驶舱")
+        query = st.text_input("全局搜索", placeholder="输入基金代码、名称、模块或关键词")
+        if query:
+            results = search_funds(query, catalog, limit=5)
+            for _, row in results.iterrows():
+                label = f"{row['fund_name']} · {row['fund_code']}"
+                if st.button(label, key=f"side_pick_{row['fund_code']}_{row['module_level_2']}", use_container_width=True):
+                    st.session_state["selected_fund"] = row["fund_code"]
+                    st.session_state["nav"] = "基金分析"
+                    rerun_app()
+        st.divider()
+        nav_options = ["首页驾驶舱", "基金分析", "实仓管理", "模块行情", "自定义搜索", "设置中心"]
+        nav = st.radio("功能模块", nav_options, key="nav", label_visibility="collapsed")
+        st.divider()
+        st.caption("数据源")
+        st.selectbox(
+            "行情模式",
+            ["东方财富优先 + 演示兜底", "仅演示行情"],
+            key="data_mode",
+            label_visibility="collapsed",
+        )
+        if st.button("刷新行情缓存", use_container_width=True):
+            st.cache_data.clear()
+            st.session_state["last_refresh_ts"] = time.time()
+            rerun_app()
+        st.caption(f"最近刷新: {datetime.fromtimestamp(st.session_state['last_refresh_ts']).strftime('%H:%M:%S')}")
+    return nav
+
+
+def page_dashboard(catalog: pd.DataFrame) -> None:
+    render_hero()
+    pos_df = portfolio_positions(catalog)
+    summary = portfolio_summary(pos_df)
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        render_metric_card("总资产", fmt_money(summary["total_value"]), f"投入 {fmt_money(summary['total_cost'])}", "info")
+    with c2:
+        tone = "green" if summary["today_pnl"] >= 0 else "red"
+        render_metric_card("今日盈亏", fmt_money(summary["today_pnl"]), "按持仓涨跌估算", tone)
+    with c3:
+        tone = "green" if summary["total_pnl"] >= 0 else "red"
+        render_metric_card("累计收益", fmt_money(summary["total_pnl"]), fmt_pct(summary["total_ret"]), tone)
+    with c4:
+        render_metric_card("持仓基金数", str(summary["fund_count"]), f"最大单基 {summary['max_fund_weight']:.1f}%", "purple")
+    with c5:
+        tone = "red" if summary["risk_level"] == "高" else "yellow" if summary["risk_level"] == "中" else "green"
+        render_metric_card("当前风险等级", summary["risk_level"], f"评分 {summary['risk_score']:.0f}/100", tone)
+    with c6:
+        render_metric_card("强势模块数量", str(summary["strong_modules"]), f"最大模块 {summary['max_module_weight']:.1f}%", "info")
+
+    left, right = st.columns([1.36, 1])
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("实仓收益曲线", "按导入持仓份额与历史净值/价格估算")
+        curve = build_portfolio_curve(pos_df, catalog)
+        st.plotly_chart(make_portfolio_curve_chart(curve), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("组合强弱雷达", "趋势 · 资金 · 风险 · 均衡")
+        st.plotly_chart(make_module_radar(pos_df), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    pool_codes = catalog["fund_code"].drop_duplicates().head(36)
+    pool_df = build_pool_snapshot(catalog, pool_codes, limit=36)
+    left2, right2 = st.columns([1.2, 1])
+    with left2:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("模块强弱热力图", "数值越高代表趋势结构越强")
+        st.plotly_chart(make_module_heatmap(pool_df), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right2:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("今日重点信号", "由趋势、量能、资金与实仓仓位联合触发")
+        alerts = generate_alerts(pos_df, catalog)
+        for group, items in alerts.items():
+            tone = "high" if group in {"风险升高", "今日需要关注"} else "mid" if group == "建议复盘" else "low"
+            st.markdown(badge(group, tone), unsafe_allow_html=True)
+            for item in items[:4]:
+                st.markdown(f'<div class="terminal-line">· {item}</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_title("需要关注的基金", "按风险位置、资金信号与仓位占比排序")
+    if pos_df.empty:
+        st.info("暂无实仓。可以在实仓管理页导入 Excel / CSV 或手动录入。")
+    else:
+        focus = pos_df.sort_values(["风险状态", "仓位占比"], ascending=[True, False])
+        show_df = focus[
+            [
+                "基金名称",
+                "基金代码",
+                "模块",
+                "持仓金额",
+                "浮盈亏",
+                "收益率",
+                "仓位占比",
+                "趋势状态",
+                "资金信号",
+                "风险状态",
+                "操作提示",
+            ]
+        ].copy()
+        st.dataframe(
+            show_df,
             use_container_width=True,
-            num_rows="dynamic",
             hide_index=True,
             column_config={
-                "代码": st.column_config.TextColumn("代码", help="6位基金/ETF代码"),
-                "名称": st.column_config.TextColumn("名称"),
-                "持仓金额": st.column_config.NumberColumn("持仓金额", min_value=0.0, step=100.0, format="%.2f"),
-                "识别来源": st.column_config.TextColumn("识别来源"),
+                "持仓金额": st.column_config.NumberColumn(format="￥%.2f"),
+                "浮盈亏": st.column_config.NumberColumn(format="￥%.2f"),
+                "收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                "仓位占比": st.column_config.NumberColumn(format="%.2f%%"),
             },
         )
-        portfolio_df, portfolio_source = enrich_holdings(edited)
-        if not portfolio_df.empty:
-            total_amount = portfolio_df["持仓金额"].sum(skipna=True)
-            total_pnl = portfolio_df["估算今日盈亏"].sum(skipna=True)
-            avg_pct = total_pnl / total_amount * 100 if total_amount else np.nan
-            p1, p2, p3, p4 = st.columns(4)
-            p1.metric("持仓市值", format_money(total_amount))
-            p2.metric("估算今日盈亏", format_money(total_pnl))
-            p3.metric("组合今日收益率", format_pct(avg_pct))
-            p4.metric("行情来源", portfolio_source.split("，")[0])
-            show_df = portfolio_df.copy()
-            for col in ["持仓金额", "估算今日盈亏", "估算收盘后金额"]:
-                show_df[col] = show_df[col].apply(format_money)
-            show_df["涨跌幅"] = show_df["涨跌幅"].apply(format_pct)
-            st.dataframe(show_df[["代码", "名称", "持仓金额", "涨跌幅", "估算今日盈亏", "估算收盘后金额"]], use_container_width=True, hide_index=True)
-            st.caption("估算结果使用实时涨跌幅线性计算，未考虑申赎费、分红、场外基金净值延迟和盘中净值偏差。")
+    st.markdown("</div>", unsafe_allow_html=True)
 
-    with tab4:
-        market_table = build_market_table(spot_df, watch_codes)
-        if market_table.empty:
-            st.warning("暂未获取到模块行情表。")
+
+def page_fund_analysis(catalog: pd.DataFrame) -> None:
+    render_hero()
+    left, main, right = st.columns([0.78, 1.72, 0.92])
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("模块选择")
+        module_l1 = st.selectbox("一级模块", ["全部"] + list(MODULE_TAXONOMY.keys()))
+        if module_l1 == "全部":
+            sub_options = ["全部"]
+            subset = catalog.copy()
         else:
-            if "涨跌幅" in market_table.columns:
-                market_table = market_table.sort_values("涨跌幅", ascending=False)
-            st.subheader(f"{module_name} 模块实时强弱排名")
-            st.dataframe(market_table, use_container_width=True, height=520, hide_index=True)
-            if "涨跌幅" in market_table.columns and len(market_table) >= 2:
-                best = market_table.iloc[0]
-                worst = market_table.iloc[-1]
-                st.info(f"当前模块中，最强为 {best.get('名称', '')}，涨跌幅 {safe_num(best.get('涨跌幅', np.nan)):.2f}%；最弱为 {worst.get('名称', '')}，涨跌幅 {safe_num(worst.get('涨跌幅', np.nan)):.2f}%。")
+            sub_options = ["全部"] + MODULE_TAXONOMY.get(module_l1, [])
+            subset = catalog[catalog["module_level_1"] == module_l1].copy()
+        module_l2 = st.selectbox("二级模块", sub_options)
+        if module_l2 != "全部":
+            subset = subset[subset["module_level_2"] == module_l2]
+        search = st.text_input("搜索基金", placeholder="例如 515030 / 半导体 / 黄金")
+        if search:
+            subset = search_funds(search, catalog, limit=50)
+        if subset.empty:
+            st.caption("当前筛选无结果，可以直接输入 6 位代码自查。")
+        else:
+            options = [f"{r.fund_name} | {r.fund_code} | {r.module_level_2}" for r in subset.itertuples()]
+            selected_label = st.selectbox("基金池", options)
+            selected_code = selected_label.split("|")[1].strip()
+            if st.button("设为当前分析", use_container_width=True):
+                st.session_state["selected_fund"] = selected_code
+                rerun_app()
+        custom_code = st.text_input("6位代码自查", placeholder="任意基金/ETF代码")
+        if st.button("自查该基金", use_container_width=True, disabled=not bool(custom_code)):
+            st.session_state["selected_fund"] = normalize_code(custom_code)
+            rerun_app()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    with tab5:
-        signal_df = hist[["日期", "收盘", "日涨跌幅", "成交额", "量能倍率", "资金行为强度", "资金信号", "均线偏离_MA5", "均线偏离_MA20", "均线偏离_MA60"]].copy()
-        signal_df["日期"] = signal_df["日期"].dt.strftime("%Y-%m-%d")
-        signal_df["成交额"] = signal_df["成交额"].apply(format_money)
-        signal_df["日涨跌幅"] = signal_df["日涨跌幅"].apply(format_pct)
-        signal_df["量能倍率"] = signal_df["量能倍率"].map(lambda x: f"{x:.2f}x" if pd.notna(x) else "暂无")
-        signal_df["资金行为强度"] = signal_df["资金行为强度"].map(lambda x: f"{x:.2f}" if pd.notna(x) else "暂无")
-        for col in ["均线偏离_MA5", "均线偏离_MA20", "均线偏离_MA60"]:
-            signal_df[col] = signal_df[col].apply(format_pct)
-        st.subheader("历史资金行为信号明细")
-        st.dataframe(signal_df.sort_values("日期", ascending=False), use_container_width=True, height=520, hide_index=True)
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("模块体系")
+        for module, subs in MODULE_TAXONOMY.items():
+            with st.expander(module, expanded=False):
+                st.caption(" / ".join(subs))
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    with tab6:
-        module_rows = [{"模块": mod, "名称": name, "代码": code} for mod, items in ETF_MODULES.items() for name, code in items.items()]
-        st.subheader("全模块基金池")
-        st.dataframe(pd.DataFrame(module_rows), use_container_width=True, height=560, hide_index=True)
-        st.info("如果这里没有你要看的基金，打开左侧手动输入6位基金/ETF代码即可。")
+    code = st.session_state.get("selected_fund", "515030")
+    hist, snap = analyze_fund(code, catalog)
+    pos_df = portfolio_positions(catalog)
+    position_hit = pos_df[pos_df["基金代码"] == snap.fund_code]
+    position = position_hit.iloc[0] if not position_hit.empty else None
 
-except Exception as e:
-    st.error("看板运行失败。")
-    st.exception(e)
+    with main:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title(f"{snap.fund_name} · {snap.fund_code}", f"{snap.module_level_1} / {snap.module_level_2} / {snap.source}")
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            render_metric_card("当前价格/净值", fmt_num(snap.close), fmt_pct(snap.pct_change), "green" if snap.pct_change >= 0 else "red")
+        with k2:
+            render_metric_card("成交额", fmt_money(snap.amount), f"量能 {snap.volume_ratio:.2f}x", "info")
+        with k3:
+            render_metric_card("趋势评分", f"{snap.trend_score}/5", snap.trend_label, "purple")
+        with k4:
+            tone = "red" if snap.risk_label == "短期过热" else "yellow" if snap.risk_label in {"略偏高", "回调区"} else "green"
+            render_metric_card("风险状态", snap.risk_label, snap.action_label, tone)
+        st.plotly_chart(make_price_chart(hist.tail(180), f"{snap.fund_name} 三层专业图表"), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("信号明细表", "最近 20 个交易日")
+        detail = hist.tail(20)[
+            [
+                "date",
+                "close",
+                "pct_change",
+                "ma5",
+                "ma20",
+                "ma60",
+                "volume_ratio",
+                "money_signal",
+                "trend_score",
+                "risk_label",
+                "action_label",
+            ]
+        ].copy()
+        detail["date"] = detail["date"].dt.strftime("%Y-%m-%d")
+        st.dataframe(
+            detail.rename(
+                columns={
+                    "date": "日期",
+                    "close": "价格/净值",
+                    "pct_change": "涨跌幅",
+                    "ma5": "MA5",
+                    "ma20": "MA20",
+                    "ma60": "MA60",
+                    "volume_ratio": "量能倍率",
+                    "money_signal": "资金信号",
+                    "trend_score": "趋势评分",
+                    "risk_label": "风险状态",
+                    "action_label": "操作提示",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "涨跌幅": st.column_config.NumberColumn(format="%.2f%%"),
+                "量能倍率": st.column_config.NumberColumn(format="%.2fx"),
+            },
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("AI专业解读", "规则模型生成，适合投研复盘")
+        st.markdown(generate_fund_interpretation(snap, hist, position))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("策略标签")
+        tone = "low" if snap.action_label == "适合继续持有" else "mid" if snap.action_label in {"不宜追高", "进入止盈观察区", "等待回踩确认"} else "high"
+        st.markdown(badge(snap.action_label, tone), unsafe_allow_html=True)
+        st.markdown(badge(snap.money_signal, "low" if "流入" in snap.money_signal else "high" if "撤出" in snap.money_signal else "mid"), unsafe_allow_html=True)
+        st.markdown(badge(snap.trend_label, "low" if snap.trend_score >= 4 else "mid" if snap.trend_score == 3 else "high"), unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("快捷操作")
+        if st.button("加入观察池", use_container_width=True):
+            watch = set(st.session_state.get("watchlist", []))
+            watch.add(snap.fund_code)
+            st.session_state["watchlist"] = list(watch)
+            st.success("已加入观察池")
+        if st.button("加入实仓", use_container_width=True):
+            new_row = pd.DataFrame(
+                [
+                    {
+                        "fund_code": snap.fund_code,
+                        "fund_name": snap.fund_name,
+                        "shares": 0.0,
+                        "cost_price": snap.close,
+                        "buy_date": date.today().strftime("%Y-%m-%d"),
+                        "account_type": "待录入",
+                        "notes": "从基金分析页添加",
+                    }
+                ]
+            )
+            st.session_state["positions"] = pd.concat([st.session_state["positions"], new_row], ignore_index=True)
+            st.success("已加入实仓草稿，可到实仓管理页补充份额")
+        module_name = st.text_input("加入自定义模块", placeholder="例如 准备止盈")
+        if st.button("保存到自定义模块", use_container_width=True, disabled=not bool(module_name)):
+            add_custom_module(module_name, snap.fund_code, snap.fund_name)
+            st.success("已加入自定义模块")
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
-if auto_refresh:
-    time.sleep(refresh_seconds)
-    st.rerun()
+def add_custom_module(module_name: str, code: str, fund_name: str = "") -> None:
+    custom = st.session_state.get("custom_modules", pd.DataFrame()).copy()
+    row = {
+        "module_id": f"custom_{int(time.time() * 1000)}",
+        "module_name": module_name.strip(),
+        "fund_code": normalize_code(code),
+        "fund_name": fund_name,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    custom = pd.concat([custom, pd.DataFrame([row])], ignore_index=True)
+    custom = custom.drop_duplicates(["module_name", "fund_code"], keep="last")
+    st.session_state["custom_modules"] = custom
+
+
+def page_positions(catalog: pd.DataFrame) -> None:
+    render_hero()
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_title("实仓导入", "支持 Excel / CSV、手动录入与模板下载")
+    up1, up2, up3 = st.columns([1.1, 1, 1])
+    with up1:
+        uploaded = st.file_uploader("上传实仓文件", type=["csv", "xlsx", "xls"])
+        if uploaded is not None:
+            try:
+                if uploaded.name.lower().endswith(".csv"):
+                    raw = pd.read_csv(uploaded)
+                else:
+                    raw = pd.read_excel(uploaded)
+                parsed = standardize_positions(raw)
+                if parsed.empty:
+                    st.warning("没有识别到有效的 6 位基金代码。")
+                else:
+                    st.session_state["positions"] = parsed
+                    st.success(f"已导入 {len(parsed)} 条持仓")
+            except Exception as exc:
+                st.error(f"导入失败: {exc}")
+    with up2:
+        st.download_button(
+            "下载标准模板",
+            data=POSITION_TEMPLATE.encode("utf-8-sig"),
+            file_name="fund_position_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        if st.button("恢复演示实仓", use_container_width=True):
+            st.session_state["positions"] = DEFAULT_POSITIONS.copy()
+            rerun_app()
+    with up3:
+        if st.button("清空实仓", use_container_width=True):
+            st.session_state["positions"] = pd.DataFrame(columns=DEFAULT_POSITIONS.columns)
+            rerun_app()
+        st.caption("字段可自动识别: 代码、基金代码、ETF代码、成本、份额、市值、买入日期等。")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_title("手动录入 / 编辑")
+    editable = st.session_state.get("positions", DEFAULT_POSITIONS).copy()
+    editable = standardize_positions(editable) if not editable.empty else DEFAULT_POSITIONS.head(0).copy()
+    edited = st.data_editor(
+        editable,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        column_config={
+            "fund_code": st.column_config.TextColumn("基金代码", help="6 位代码"),
+            "fund_name": st.column_config.TextColumn("基金名称"),
+            "shares": st.column_config.NumberColumn("持有份额", min_value=0.0, step=100.0),
+            "cost_price": st.column_config.NumberColumn("持仓成本", min_value=0.0, step=0.001, format="%.4f"),
+            "buy_date": st.column_config.TextColumn("买入日期"),
+            "account_type": st.column_config.TextColumn("账户类型"),
+            "notes": st.column_config.TextColumn("备注"),
+        },
+    )
+    if st.button("保存实仓", use_container_width=True):
+        st.session_state["positions"] = standardize_positions(edited)
+        st.success("实仓已保存")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    pos_df = portfolio_positions(catalog)
+    summary = portfolio_summary(pos_df)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        render_metric_card("总市值", fmt_money(summary["total_value"]), "", "info")
+    with c2:
+        render_metric_card("总投入", fmt_money(summary["total_cost"]), "", "purple")
+    with c3:
+        render_metric_card("总浮盈", fmt_money(summary["total_pnl"]), fmt_pct(summary["total_ret"]), "green" if summary["total_pnl"] >= 0 else "red")
+    with c4:
+        render_metric_card("今日盈亏", fmt_money(summary["today_pnl"]), "", "green" if summary["today_pnl"] >= 0 else "red")
+    with c5:
+        render_metric_card("最大单只仓位", f"{summary['max_fund_weight']:.1f}%", "", "yellow")
+    with c6:
+        render_metric_card("风险评分", f"{summary['risk_score']:.0f}", summary["risk_level"], "red" if summary["risk_level"] == "高" else "yellow")
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_title("持仓表", "结合当前行情、趋势、资金与操作提示")
+    if pos_df.empty:
+        st.info("暂无实仓数据。")
+    else:
+        show = pos_df[
+            [
+                "基金代码",
+                "基金名称",
+                "模块",
+                "持仓份额",
+                "成本价",
+                "当前价",
+                "持仓金额",
+                "浮盈亏",
+                "收益率",
+                "仓位占比",
+                "趋势状态",
+                "资金信号",
+                "操作提示",
+            ]
+        ].copy()
+        st.dataframe(
+            show,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "持仓份额": st.column_config.NumberColumn(format="%.2f"),
+                "成本价": st.column_config.NumberColumn(format="%.4f"),
+                "当前价": st.column_config.NumberColumn(format="%.4f"),
+                "持仓金额": st.column_config.NumberColumn(format="￥%.2f"),
+                "浮盈亏": st.column_config.NumberColumn(format="￥%.2f"),
+                "收益率": st.column_config.NumberColumn(format="%.2f%%"),
+                "仓位占比": st.column_config.NumberColumn(format="%.2f%%"),
+            },
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    g1, g2, g3 = st.columns(3)
+    pie, bar, risk = make_structure_charts(pos_df)
+    with g1:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("模块仓位")
+        st.plotly_chart(pie, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with g2:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("行业集中度")
+        st.plotly_chart(bar, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with g3:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("风险分布")
+        st.plotly_chart(risk, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_title("组合诊断", "理财师式提示")
+    for note in generate_portfolio_diagnosis(pos_df, summary):
+        st.markdown(f'<div class="signal-card">{note}</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def page_module_market(catalog: pd.DataFrame) -> None:
+    render_hero()
+    top = st.columns([1, 1, 1, 1])
+    with top[0]:
+        module_l1 = st.selectbox("一级模块", list(MODULE_TAXONOMY.keys()), key="pool_l1")
+    with top[1]:
+        module_l2 = st.selectbox("二级模块", ["全部"] + MODULE_TAXONOMY.get(module_l1, []), key="pool_l2")
+    with top[2]:
+        sort_by = st.selectbox("排序", ["今日涨跌幅", "成交额", "趋势评分", "资金信号", "风险状态"], key="pool_sort")
+    with top[3]:
+        filter_by = st.selectbox("筛选", ["全部", "只看强流入", "只看短期过热", "只看回调区", "只看趋势评分4分以上", "只看缩量观望"], key="pool_filter")
+
+    subset = catalog[catalog["module_level_1"] == module_l1].copy()
+    if module_l2 != "全部":
+        subset = subset[subset["module_level_2"] == module_l2]
+    pool_df = build_pool_snapshot(catalog, subset["fund_code"], limit=80)
+    if not pool_df.empty:
+        if filter_by == "只看强流入":
+            pool_df = pool_df[pool_df["资金信号"] == "强流入"]
+        elif filter_by == "只看短期过热":
+            pool_df = pool_df[pool_df["风险状态"] == "短期过热"]
+        elif filter_by == "只看回调区":
+            pool_df = pool_df[pool_df["风险状态"].isin(["回调区", "深度回调"])]
+        elif filter_by == "只看趋势评分4分以上":
+            pool_df = pool_df[pool_df["趋势评分"] >= 4]
+        elif filter_by == "只看缩量观望":
+            pool_df = pool_df[pool_df["资金信号"] == "缩量观望"]
+        ascending = sort_by in {"风险状态"}
+        if sort_by in pool_df.columns:
+            pool_df = pool_df.sort_values(sort_by, ascending=ascending)
+
+    left, right = st.columns([1.32, 1])
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("模块行情池", f"{module_l1} / {module_l2}")
+        if pool_df.empty:
+            st.info("当前模块暂无基金样本。可以在自定义搜索页添加基金到模块。")
+        else:
+            st.dataframe(
+                pool_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "当前价格": st.column_config.NumberColumn(format="%.4f"),
+                    "今日涨跌幅": st.column_config.NumberColumn(format="%.2f%%"),
+                    "成交额": st.column_config.NumberColumn(format="￥%.2f"),
+                    "量能倍率": st.column_config.NumberColumn(format="%.2fx"),
+                },
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("强弱热力图")
+        st.plotly_chart(make_module_heatmap(pool_df), use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("资金信号分布")
+        if pool_df.empty:
+            st.caption("暂无数据")
+        else:
+            signal_df = pool_df["资金信号"].value_counts().reset_index()
+            signal_df.columns = ["资金信号", "数量"]
+            fig = px.bar(signal_df, x="资金信号", y="数量", template=PLOTLY_TEMPLATE, color="资金信号")
+            fig.update_layout(height=270, margin=dict(l=10, r=10, t=20, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(5,8,22,0.72)", showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_search_result(row: pd.Series, catalog: pd.DataFrame, index: int) -> None:
+    code = row["fund_code"]
+    try:
+        _, snap = analyze_fund(code, catalog)
+    except Exception:
+        snap = FundSnapshot(
+            fund_code=code,
+            fund_name=row["fund_name"],
+            module_level_1=row.get("module_level_1", "用户自查"),
+            module_level_2=row.get("module_level_2", "未归类"),
+            close=np.nan,
+            pct_change=0,
+            amount=0,
+            volume_ratio=1,
+            trend_score=0,
+            trend_label="待观察",
+            money_signal="中性",
+            risk_label="待观察",
+            action_label="继续观察",
+            ma20_deviation=0,
+            source="待获取",
+        )
+    st.markdown(
+        f"""
+        <div class="result-card">
+            <strong>{snap.fund_name}</strong>
+            <span class="small-muted"> · {snap.fund_code} · {snap.module_level_1}/{snap.module_level_2}</span><br>
+            {badge('涨跌 ' + fmt_pct(snap.pct_change), 'low' if snap.pct_change >= 0 else 'high')}
+            {badge('成交额 ' + fmt_money(snap.amount), 'info')}
+            {badge(snap.trend_label, 'low' if snap.trend_score >= 4 else 'mid' if snap.trend_score == 3 else 'high')}
+            {badge(snap.money_signal, 'low' if '流入' in snap.money_signal else 'high' if '撤出' in snap.money_signal else 'mid')}
+            {badge(snap.risk_label, 'high' if snap.risk_label == '短期过热' else 'mid' if snap.risk_label in {'略偏高', '回调区'} else 'low')}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        if st.button("加入观察池", key=f"watch_{code}_{index}", use_container_width=True):
+            watch = set(st.session_state.get("watchlist", []))
+            watch.add(code)
+            st.session_state["watchlist"] = list(watch)
+            st.success("已加入观察池")
+    with b2:
+        if st.button("加入实仓", key=f"pos_{code}_{index}", use_container_width=True):
+            new_row = pd.DataFrame(
+                [
+                    {
+                        "fund_code": code,
+                        "fund_name": snap.fund_name,
+                        "shares": 0.0,
+                        "cost_price": snap.close if pd.notna(snap.close) else 0.0,
+                        "buy_date": date.today().strftime("%Y-%m-%d"),
+                        "account_type": "待录入",
+                        "notes": "从搜索页添加",
+                    }
+                ]
+            )
+            st.session_state["positions"] = pd.concat([st.session_state["positions"], new_row], ignore_index=True)
+            st.success("已加入实仓草稿")
+    with b3:
+        if st.button("查看详情", key=f"detail_{code}_{index}", use_container_width=True):
+            st.session_state["selected_fund"] = code
+            st.session_state["nav"] = "基金分析"
+            rerun_app()
+
+
+def page_custom_search(catalog: pd.DataFrame) -> None:
+    render_hero()
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_title("自定义基金搜索", "支持代码、名称、关键词、模块名称与任意 6 位代码自查")
+    query = st.text_input("搜索", placeholder="515030 / 新能源 / 半导体 / 黄金 / 煤炭 / 恒生")
+    results = search_funds(query, catalog, limit=20) if query else catalog.head(12)
+    st.caption("当系统模块没有该基金时，可直接输入任意 6 位代码，系统会自动判断市场并尝试生成分析图表。")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    left, right = st.columns([1.35, 0.9])
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("搜索结果")
+        if results.empty:
+            st.info("暂无匹配结果。")
+        else:
+            for idx, row in results.iterrows():
+                render_search_result(row, catalog, int(idx))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("用户自定义模块")
+        module_name = st.text_input("模块名称", placeholder="我的长期持仓 / 准备止盈 / 高波动赛道")
+        fund_code = st.text_input("基金代码", placeholder="6 位代码")
+        fund_name = st.text_input("基金名称", placeholder="可留空自动识别")
+        if st.button("添加到模块", use_container_width=True, disabled=not (module_name and fund_code)):
+            add_custom_module(module_name, fund_code, fund_name)
+            st.success("已添加")
+            rerun_app()
+        custom = st.session_state.get("custom_modules", pd.DataFrame())
+        if custom.empty:
+            st.caption("暂无自定义模块。")
+        else:
+            st.dataframe(custom[["module_name", "fund_code", "fund_name", "created_at"]], use_container_width=True, hide_index=True)
+            if st.button("清空自定义模块", use_container_width=True):
+                st.session_state["custom_modules"] = custom.head(0)
+                rerun_app()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("观察池")
+        watch = st.session_state.get("watchlist", [])
+        if not watch:
+            st.caption("暂无观察基金。")
+        else:
+            rows = []
+            for code in watch:
+                try:
+                    rows.append(snapshot_row(code, catalog))
+                except Exception:
+                    continue
+            if rows:
+                watch_df = pd.DataFrame(rows)
+                st.dataframe(
+                    watch_df[["基金名称", "基金代码", "今日涨跌幅", "趋势评分", "资金信号", "风险状态"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={"今日涨跌幅": st.column_config.NumberColumn(format="%.2f%%")},
+                )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def page_settings(catalog: pd.DataFrame) -> None:
+    render_hero()
+    left, right = st.columns([1, 1])
+    with left:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("数据源设置")
+        st.selectbox(
+            "行情模式",
+            ["东方财富优先 + 演示兜底", "仅演示行情"],
+            key="data_mode",
+        )
+        st.selectbox("刷新频率", ["手动刷新", "5分钟", "15分钟", "30分钟", "60分钟"], key="refresh_frequency")
+        st.caption("公开行情接口可能存在延迟或临时不可用，本原型会自动兜底为稳定演示行情。")
+        if st.button("清理缓存并刷新", use_container_width=True):
+            st.cache_data.clear()
+            st.session_state["last_refresh_ts"] = time.time()
+            st.success("缓存已清理")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("基金基础表")
+        st.dataframe(
+            catalog[["fund_code", "fund_name", "module_level_1", "module_level_2", "market", "asset_type", "risk_level"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("实仓数据管理")
+        positions = st.session_state.get("positions", pd.DataFrame())
+        if positions.empty:
+            st.caption("暂无实仓数据。")
+        else:
+            csv = standardize_positions(positions).to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "导出实仓 CSV",
+                data=csv,
+                file_name=f"fundpilot_positions_{date.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        pos_df = portfolio_positions(catalog)
+        summary = portfolio_summary(pos_df)
+        diagnosis = "\n".join(generate_portfolio_diagnosis(pos_df, summary))
+        report = io.StringIO()
+        report.write("FundPilot Pro 组合诊断报告\n")
+        report.write(f"生成日期,{date.today().strftime('%Y-%m-%d')}\n")
+        report.write(f"总市值,{summary['total_value']:.2f}\n")
+        report.write(f"总浮盈,{summary['total_pnl']:.2f}\n")
+        report.write(f"收益率,{summary['total_ret']:.2f}%\n")
+        report.write(f"风险等级,{summary['risk_level']}\n")
+        report.write("\n组合诊断\n")
+        report.write(diagnosis)
+        st.download_button(
+            "导出诊断报告",
+            data=report.getvalue().encode("utf-8-sig"),
+            file_name=f"fundpilot_report_{date.today().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        section_title("数据结构")
+        st.markdown(
+            """
+            <div class="terminal-line">fund_base: fund_code, fund_name, module_level_1, module_level_2, market, asset_type, risk_level</div>
+            <div class="terminal-line">market_data: date, fund_code, open, close, high, low, volume, amount, pct_change</div>
+            <div class="terminal-line">indicator: ma5, ma20, ma60, amount_ma20, volume_ratio, obv, money_signal, trend_score, risk_label</div>
+            <div class="terminal-line">position: position_id, fund_code, shares, cost_price, buy_date, account_type, notes</div>
+            <div class="terminal-line">custom_module: module_id, module_name, fund_code, fund_name, created_at</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
+def main() -> None:
+    apply_page_config()
+    inject_css()
+    init_state()
+    catalog = build_catalog()
+    nav = render_sidebar(catalog)
+    if nav == "首页驾驶舱":
+        page_dashboard(catalog)
+    elif nav == "基金分析":
+        page_fund_analysis(catalog)
+    elif nav == "实仓管理":
+        page_positions(catalog)
+    elif nav == "模块行情":
+        page_module_market(catalog)
+    elif nav == "自定义搜索":
+        page_custom_search(catalog)
+    elif nav == "设置中心":
+        page_settings(catalog)
+
+
+if __name__ == "__main__":
+    main()
