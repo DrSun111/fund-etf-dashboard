@@ -6,6 +6,7 @@ import akshare as ak
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 from plotly.subplots import make_subplots
 
@@ -22,7 +23,7 @@ st.set_page_config(
 
 
 # =========================
-# 本地缓存设置
+# 缓存目录
 # =========================
 CACHE_DIR = Path(".etf_cache")
 CACHE_DIR.mkdir(exist_ok=True)
@@ -46,15 +47,14 @@ def save_df_cache(df: pd.DataFrame, file_path: Path):
 def load_df_cache(file_path: Path) -> pd.DataFrame:
     try:
         if file_path.exists():
-            df = pd.read_csv(file_path)
-            return df
+            return pd.read_csv(file_path)
     except Exception:
         pass
     return pd.DataFrame()
 
 
 # =========================
-# 自定义高级界面风格
+# 页面样式
 # =========================
 CUSTOM_CSS = """
 <style>
@@ -132,7 +132,7 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
 # =========================
-# 默认基金/ETF池
+# 默认 ETF 池
 # =========================
 DEFAULT_ETFS = {
     "沪深300ETF": "510300",
@@ -153,7 +153,7 @@ DEFAULT_ETFS = {
 
 
 # =========================
-# 工具函数
+# 基础工具函数
 # =========================
 def safe_num(x):
     try:
@@ -184,23 +184,188 @@ def format_pct(x):
     return f"{x:.2f}%"
 
 
-def fetch_with_retry(fetch_func, max_retries=3, sleep_seconds=2):
+def get_sec_id(symbol: str) -> str:
+    """
+    东方财富 secid：
+    上海：1.xxxxxx
+    深圳：0.xxxxxx
+    """
+    symbol = str(symbol).strip()
+    if symbol.startswith(("5", "6", "9")):
+        return f"1.{symbol}"
+    return f"0.{symbol}"
+
+
+def request_json(url, params=None, timeout=12):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": "https://quote.eastmoney.com/"
+    }
+
     last_error = None
 
-    for i in range(max_retries):
+    for _ in range(3):
         try:
-            result = fetch_func()
-            if result is not None:
-                if isinstance(result, pd.DataFrame):
-                    if not result.empty:
-                        return result, None
-                else:
-                    return result, None
+            r = requests.get(url, params=params, headers=headers, timeout=timeout)
+            r.raise_for_status()
+            return r.json(), None
         except Exception as e:
             last_error = e
-            time.sleep(sleep_seconds)
+            time.sleep(1.5)
 
     return None, last_error
+
+
+# =========================
+# 备用数据源：东方财富直连
+# =========================
+def fetch_history_from_eastmoney(symbol: str, days: int = 240) -> pd.DataFrame:
+    """
+    直接请求东方财富日 K 数据，作为 AkShare 失败后的备用源。
+    """
+    secid = get_sec_id(symbol)
+
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    params = {
+        "secid": secid,
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+        "klt": "101",
+        "fqt": "0",
+        "beg": "20000101",
+        "end": dt.datetime.now().strftime("%Y%m%d"),
+        "lmt": str(max(days * 2, 600))
+    }
+
+    data, error = request_json(url, params=params)
+
+    if not data:
+        raise RuntimeError(f"东方财富历史行情接口失败：{error}")
+
+    klines = data.get("data", {}).get("klines", [])
+
+    if not klines:
+        raise RuntimeError("东方财富历史行情接口返回为空")
+
+    rows = []
+
+    for item in klines:
+        parts = item.split(",")
+        if len(parts) < 7:
+            continue
+
+        rows.append({
+            "日期": parts[0],
+            "开盘": parts[1],
+            "收盘": parts[2],
+            "最高": parts[3],
+            "最低": parts[4],
+            "成交量": parts[5],
+            "成交额": parts[6],
+            "振幅": parts[7] if len(parts) > 7 else np.nan,
+            "涨跌幅": parts[8] if len(parts) > 8 else np.nan,
+            "涨跌额": parts[9] if len(parts) > 9 else np.nan,
+            "换手率": parts[10] if len(parts) > 10 else np.nan,
+        })
+
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        raise RuntimeError("东方财富历史行情解析后为空")
+
+    df["日期"] = pd.to_datetime(df["日期"])
+
+    numeric_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.sort_values("日期").reset_index(drop=True)
+    return df.tail(days).reset_index(drop=True)
+
+
+def fetch_spot_from_eastmoney(codes) -> pd.DataFrame:
+    """
+    直接请求东方财富实时行情，作为 AkShare 失败后的备用源。
+    """
+    secids = ",".join([get_sec_id(code) for code in codes])
+
+    url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+    params = {
+        "fltt": "2",
+        "secids": secids,
+        "fields": "f12,f14,f2,f3,f4,f5,f6"
+    }
+
+    data, error = request_json(url, params=params)
+
+    if not data:
+        raise RuntimeError(f"东方财富实时行情接口失败：{error}")
+
+    diff = data.get("data", {}).get("diff", [])
+
+    if not diff:
+        raise RuntimeError("东方财富实时行情接口返回为空")
+
+    rows = []
+    for item in diff:
+        rows.append({
+            "代码": str(item.get("f12", "")),
+            "名称": item.get("f14", ""),
+            "最新价": item.get("f2", np.nan),
+            "涨跌幅": item.get("f3", np.nan),
+            "涨跌额": item.get("f4", np.nan),
+            "成交量": item.get("f5", np.nan),
+            "成交额": item.get("f6", np.nan),
+        })
+
+    df = pd.DataFrame(rows)
+
+    for col in ["最新价", "涨跌幅", "涨跌额", "成交量", "成交额"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+
+# =========================
+# AkShare 数据源
+# =========================
+def fetch_history_from_akshare(symbol: str, days: int = 240) -> pd.DataFrame:
+    end_date = dt.datetime.now().strftime("%Y%m%d")
+    start_date = (dt.datetime.now() - dt.timedelta(days=days * 2)).strftime("%Y%m%d")
+
+    df = ak.fund_etf_hist_em(
+        symbol=str(symbol),
+        period="daily",
+        start_date=start_date,
+        end_date=end_date,
+        adjust=""
+    )
+
+    if df is None or df.empty:
+        raise RuntimeError("AkShare 历史行情返回为空")
+
+    df["日期"] = pd.to_datetime(df["日期"])
+    df = df.sort_values("日期").reset_index(drop=True)
+
+    numeric_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df.tail(days).reset_index(drop=True)
+
+
+def fetch_spot_from_akshare() -> pd.DataFrame:
+    df = ak.fund_etf_spot_em()
+    if df is None or df.empty:
+        raise RuntimeError("AkShare 实时行情返回为空")
+    return df
 
 
 def normalize_spot_columns(df):
@@ -228,74 +393,84 @@ def normalize_spot_columns(df):
 
 
 # =========================
-# 稳定数据获取函数
+# 稳定行情获取
 # =========================
 @st.cache_data(ttl=45, show_spinner=False)
 def get_etf_spot_stable():
-    """
-    ETF实时行情。
-    优先实时接口；失败时读取最近一次成功缓存。
-    """
-    def fetch():
-        return ak.fund_etf_spot_em()
+    codes = list(DEFAULT_ETFS.values())
+    errors = []
 
-    df, error = fetch_with_retry(fetch, max_retries=3, sleep_seconds=2)
+    # 第一层：AkShare
+    for _ in range(2):
+        try:
+            df = fetch_spot_from_akshare()
+            df = normalize_spot_columns(df)
+            save_df_cache(df, SPOT_CACHE_FILE)
+            return df, "AkShare实时数据", ""
+        except Exception as e:
+            errors.append(f"AkShare实时行情失败：{e}")
+            time.sleep(1.5)
 
-    if df is not None and not df.empty:
-        save_df_cache(df, SPOT_CACHE_FILE)
-        return df, "实时数据", ""
+    # 第二层：东方财富直连
+    for _ in range(2):
+        try:
+            df = fetch_spot_from_eastmoney(codes)
+            save_df_cache(df, SPOT_CACHE_FILE)
+            return df, "东方财富实时数据", ""
+        except Exception as e:
+            errors.append(f"东方财富实时行情失败：{e}")
+            time.sleep(1.5)
 
+    # 第三层：缓存
     cached = load_df_cache(SPOT_CACHE_FILE)
     if not cached.empty:
-        return cached, "缓存数据", str(error)
+        return cached, "缓存实时行情", "；".join(errors)
 
-    return pd.DataFrame(), "数据不可用", str(error)
+    return pd.DataFrame(), "实时行情不可用", "；".join(errors)
 
 
 @st.cache_data(ttl=180, show_spinner=False)
 def get_etf_history_stable(symbol: str, days: int = 240):
-    """
-    ETF历史行情。
-    优先实时接口；失败时读取最近一次成功缓存。
-    """
-    end_date = dt.datetime.now().strftime("%Y%m%d")
-    start_date = (dt.datetime.now() - dt.timedelta(days=days * 2)).strftime("%Y%m%d")
     cache_file = history_cache_file(symbol)
+    errors = []
 
-    def fetch():
-        return ak.fund_etf_hist_em(
-            symbol=str(symbol),
-            period="daily",
-            start_date=start_date,
-            end_date=end_date,
-            adjust=""
-        )
+    # 第一层：AkShare
+    for _ in range(2):
+        try:
+            df = fetch_history_from_akshare(symbol, days)
+            save_df_cache(df, cache_file)
+            df = add_indicators(df)
+            return df, "AkShare历史行情", ""
+        except Exception as e:
+            errors.append(f"AkShare历史行情失败：{e}")
+            time.sleep(1.5)
 
-    df, error = fetch_with_retry(fetch, max_retries=3, sleep_seconds=2)
+    # 第二层：东方财富直连
+    for _ in range(2):
+        try:
+            df = fetch_history_from_eastmoney(symbol, days)
+            save_df_cache(df, cache_file)
+            df = add_indicators(df)
+            return df, "东方财富历史行情", ""
+        except Exception as e:
+            errors.append(f"东方财富历史行情失败：{e}")
+            time.sleep(1.5)
 
-    if df is not None and not df.empty:
-        save_df_cache(df, cache_file)
-        source = "实时数据"
-    else:
-        df = load_df_cache(cache_file)
-        source = "缓存数据" if not df.empty else "数据不可用"
+    # 第三层：缓存
+    cached = load_df_cache(cache_file)
+    if not cached.empty:
+        try:
+            cached["日期"] = pd.to_datetime(cached["日期"])
+            numeric_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]
+            for col in numeric_cols:
+                if col in cached.columns:
+                    cached[col] = pd.to_numeric(cached[col], errors="coerce")
+            cached = add_indicators(cached)
+            return cached.tail(days).reset_index(drop=True), "缓存历史行情", "；".join(errors)
+        except Exception as e:
+            errors.append(f"缓存读取失败：{e}")
 
-    if df is None or df.empty:
-        return pd.DataFrame(), source, str(error)
-
-    try:
-        df["日期"] = pd.to_datetime(df["日期"])
-        df = df.sort_values("日期").reset_index(drop=True)
-
-        numeric_cols = ["开盘", "收盘", "最高", "最低", "成交量", "成交额", "涨跌幅"]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        df = add_indicators(df)
-        return df.tail(days).reset_index(drop=True), source, str(error)
-    except Exception as e:
-        return pd.DataFrame(), "数据处理失败", str(e)
+    return pd.DataFrame(), "历史行情不可用", "；".join(errors)
 
 
 # =========================
@@ -370,18 +545,6 @@ def classify_money_signal(row):
         return "中性"
 
 
-def get_signal_color(signal):
-    if signal in ["强流入", "温和流入"]:
-        return "#22c55e"
-    elif signal in ["强撤出", "温和撤出"]:
-        return "#ef4444"
-    elif signal == "分歧放量":
-        return "#f59e0b"
-    elif signal == "缩量观望":
-        return "#94a3b8"
-    return "#64748b"
-
-
 # =========================
 # 综合判断
 # =========================
@@ -397,29 +560,20 @@ def compute_summary(hist):
         }
 
     latest = hist.iloc[-1]
-
     close = latest["收盘"]
-    ma5 = latest["MA5"]
-    ma20 = latest["MA20"]
-    ma60 = latest["MA60"]
-    money_signal = latest["资金信号"]
 
     trend_score = 0
 
-    if pd.notna(ma5) and close > ma5:
+    if pd.notna(latest["MA5"]) and close > latest["MA5"]:
         trend_score += 1
-    if pd.notna(ma20) and close > ma20:
+    if pd.notna(latest["MA20"]) and close > latest["MA20"]:
         trend_score += 1
-    if pd.notna(ma60) and close > ma60:
+    if pd.notna(latest["MA60"]) and close > latest["MA60"]:
         trend_score += 1
-
-    if pd.notna(hist["MA5"].iloc[-1]) and pd.notna(hist["MA20"].iloc[-1]):
-        if hist["MA5"].iloc[-1] > hist["MA20"].iloc[-1]:
-            trend_score += 1
-
-    if pd.notna(hist["MA20"].iloc[-1]) and pd.notna(hist["MA60"].iloc[-1]):
-        if hist["MA20"].iloc[-1] > hist["MA60"].iloc[-1]:
-            trend_score += 1
+    if pd.notna(latest["MA5"]) and pd.notna(latest["MA20"]) and latest["MA5"] > latest["MA20"]:
+        trend_score += 1
+    if pd.notna(latest["MA20"]) and pd.notna(latest["MA60"]) and latest["MA20"] > latest["MA60"]:
+        trend_score += 1
 
     if trend_score >= 4:
         trend_label = "趋势偏强"
@@ -431,7 +585,6 @@ def compute_summary(hist):
         trend_label = "趋势偏弱"
 
     bias20 = latest["均线偏离_MA20"]
-
     if pd.isna(bias20):
         risk_label = "风险不明"
     elif bias20 > 8:
@@ -445,13 +598,13 @@ def compute_summary(hist):
     else:
         risk_label = "正常波动"
 
-    money_label = money_signal
+    money_label = latest["资金信号"]
 
-    if trend_label in ["趋势偏强", "趋势修复"] and money_signal in ["强流入", "温和流入"]:
+    if trend_label in ["趋势偏强", "趋势修复"] and money_label in ["强流入", "温和流入"]:
         action_label = "持有观察 / 不宜追高"
-    elif trend_label in ["趋势偏弱"] and money_signal in ["强撤出", "温和撤出"]:
+    elif trend_label == "趋势偏弱" and money_label in ["强撤出", "温和撤出"]:
         action_label = "谨慎观望"
-    elif risk_label in ["深度回调", "回调区"] and money_signal not in ["强撤出"]:
+    elif risk_label in ["深度回调", "回调区"] and money_label not in ["强撤出"]:
         action_label = "适合小额定投观察"
     elif risk_label == "短期过热":
         action_label = "避免一次性追高"
@@ -472,32 +625,18 @@ def compute_summary(hist):
 
 def generate_commentary(latest, trend_label, risk_label, money_label, action_label):
     close = latest["收盘"]
-    ma5 = latest["MA5"]
-    ma20 = latest["MA20"]
-    ma60 = latest["MA60"]
-    vol_ratio = latest["量能倍率"]
-    bias20 = latest["均线偏离_MA20"]
-
     lines = []
 
-    if pd.notna(ma5):
-        if close > ma5:
-            lines.append("价格位于5日均线上方，说明超短期动能尚可。")
-        else:
-            lines.append("价格低于5日均线，说明超短期动能偏弱。")
+    if pd.notna(latest["MA5"]):
+        lines.append("价格位于5日均线上方，说明超短期动能尚可。" if close > latest["MA5"] else "价格低于5日均线，说明超短期动能偏弱。")
 
-    if pd.notna(ma20):
-        if close > ma20:
-            lines.append("价格站上20日均线，短期结构有修复迹象。")
-        else:
-            lines.append("价格仍低于20日均线，短期趋势尚未完全扭转。")
+    if pd.notna(latest["MA20"]):
+        lines.append("价格站上20日均线，短期结构有修复迹象。" if close > latest["MA20"] else "价格仍低于20日均线，短期趋势尚未完全扭转。")
 
-    if pd.notna(ma60):
-        if close > ma60:
-            lines.append("价格处于60日均线上方，中期结构相对稳定。")
-        else:
-            lines.append("价格低于60日均线，中期趋势仍需谨慎。")
+    if pd.notna(latest["MA60"]):
+        lines.append("价格处于60日均线上方，中期结构相对稳定。" if close > latest["MA60"] else "价格低于60日均线，中期趋势仍需谨慎。")
 
+    vol_ratio = latest["量能倍率"]
     if pd.notna(vol_ratio):
         if vol_ratio >= 1.5:
             lines.append(f"当前成交额约为20日均值的 {vol_ratio:.2f} 倍，属于明显放量。")
@@ -517,19 +656,13 @@ def generate_commentary(latest, trend_label, risk_label, money_label, action_lab
     elif money_label == "缩量观望":
         lines.append("当前缩量明显，说明资金参与意愿不足，更适合等待方向选择。")
 
-    if pd.notna(bias20):
-        if bias20 > 8:
-            lines.append("价格相对20日均线偏离较大，短期追高风险上升。")
-        elif bias20 < -8:
-            lines.append("价格相对20日均线明显下偏，若基本面逻辑未变，可进入观察区。")
-
     lines.append(f"综合判断：{trend_label}，风险状态为{risk_label}，当前策略更偏向“{action_label}”。")
 
     return "\n\n".join(lines)
 
 
 # =========================
-# 绘图函数
+# 绘图
 # =========================
 def draw_professional_chart(hist, title):
     fig = make_subplots(
@@ -538,202 +671,35 @@ def draw_professional_chart(hist, title):
         shared_xaxes=True,
         vertical_spacing=0.06,
         row_heights=[0.58, 0.22, 0.20],
-        subplot_titles=(
-            "价格/净值走势与均线结构",
-            "成交额与量能变化",
-            "资金行为强度代理指标"
-        )
+        subplot_titles=("价格/净值走势与均线结构", "成交额与量能变化", "资金行为强度代理指标")
     )
 
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"],
-            y=hist["收盘"],
-            mode="lines",
-            name="收盘价/净值",
-            line=dict(width=2.8, color="#E5E7EB")
-        ),
-        row=1,
-        col=1
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"],
-            y=hist["MA5"],
-            mode="lines",
-            name="MA5",
-            line=dict(width=1.5, color="#38BDF8")
-        ),
-        row=1,
-        col=1
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"],
-            y=hist["MA20"],
-            mode="lines",
-            name="MA20",
-            line=dict(width=1.8, color="#FBBF24")
-        ),
-        row=1,
-        col=1
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"],
-            y=hist["MA60"],
-            mode="lines",
-            name="MA60",
-            line=dict(width=1.8, color="#A78BFA")
-        ),
-        row=1,
-        col=1
-    )
-
-    strong_in = hist[hist["资金信号"] == "强流入"]
-    strong_out = hist[hist["资金信号"] == "强撤出"]
-    warm_in = hist[hist["资金信号"] == "温和流入"]
-    warm_out = hist[hist["资金信号"] == "温和撤出"]
-
-    if not strong_in.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=strong_in["日期"],
-                y=strong_in["收盘"],
-                mode="markers",
-                name="强流入位置",
-                marker=dict(size=11, color="#22C55E", symbol="triangle-up"),
-                hovertemplate="日期=%{x}<br>价格=%{y}<br>信号=强流入<extra></extra>"
-            ),
-            row=1,
-            col=1
-        )
-
-    if not strong_out.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=strong_out["日期"],
-                y=strong_out["收盘"],
-                mode="markers",
-                name="强撤出位置",
-                marker=dict(size=11, color="#EF4444", symbol="triangle-down"),
-                hovertemplate="日期=%{x}<br>价格=%{y}<br>信号=强撤出<extra></extra>"
-            ),
-            row=1,
-            col=1
-        )
-
-    if not warm_in.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=warm_in["日期"],
-                y=warm_in["收盘"],
-                mode="markers",
-                name="温和流入",
-                marker=dict(size=7, color="#86EFAC", symbol="circle"),
-                hovertemplate="日期=%{x}<br>价格=%{y}<br>信号=温和流入<extra></extra>"
-            ),
-            row=1,
-            col=1
-        )
-
-    if not warm_out.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=warm_out["日期"],
-                y=warm_out["收盘"],
-                mode="markers",
-                name="温和撤出",
-                marker=dict(size=7, color="#FCA5A5", symbol="circle"),
-                hovertemplate="日期=%{x}<br>价格=%{y}<br>信号=温和撤出<extra></extra>"
-            ),
-            row=1,
-            col=1
-        )
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["收盘"], mode="lines", name="收盘价/净值", line=dict(width=2.8, color="#E5E7EB")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA5"], mode="lines", name="MA5", line=dict(width=1.5, color="#38BDF8")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA20"], mode="lines", name="MA20", line=dict(width=1.8, color="#FBBF24")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["MA60"], mode="lines", name="MA60", line=dict(width=1.8, color="#A78BFA")), row=1, col=1)
 
     amount_colors = np.where(hist["日涨跌幅"] >= 0, "#22C55E", "#EF4444")
-
-    fig.add_trace(
-        go.Bar(
-            x=hist["日期"],
-            y=hist["成交额"] / 1e8,
-            name="成交额/亿",
-            marker_color=amount_colors,
-            opacity=0.72
-        ),
-        row=2,
-        col=1
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=hist["日期"],
-            y=hist["成交额_MA20"] / 1e8,
-            mode="lines",
-            name="成交额MA20/亿",
-            line=dict(width=1.8, color="#FBBF24")
-        ),
-        row=2,
-        col=1
-    )
+    fig.add_trace(go.Bar(x=hist["日期"], y=hist["成交额"] / 1e8, name="成交额/亿", marker_color=amount_colors, opacity=0.72), row=2, col=1)
+    fig.add_trace(go.Scatter(x=hist["日期"], y=hist["成交额_MA20"] / 1e8, mode="lines", name="成交额MA20/亿", line=dict(width=1.8, color="#FBBF24")), row=2, col=1)
 
     money_colors = np.where(hist["资金行为强度"] >= 0, "#22C55E", "#EF4444")
-
-    fig.add_trace(
-        go.Bar(
-            x=hist["日期"],
-            y=hist["资金行为强度"],
-            name="资金行为强度",
-            marker_color=money_colors,
-            opacity=0.78
-        ),
-        row=3,
-        col=1
-    )
-
-    fig.add_hline(
-        y=0,
-        line_width=1,
-        line_dash="dot",
-        line_color="#94A3B8",
-        row=3,
-        col=1
-    )
+    fig.add_trace(go.Bar(x=hist["日期"], y=hist["资金行为强度"], name="资金行为强度", marker_color=money_colors, opacity=0.78), row=3, col=1)
+    fig.add_hline(y=0, line_width=1, line_dash="dot", line_color="#94A3B8", row=3, col=1)
 
     fig.update_layout(
-        title=dict(
-            text=title,
-            font=dict(size=22, color="#F8FAFC")
-        ),
+        title=dict(text=title, font=dict(size=22, color="#F8FAFC")),
         height=820,
         hovermode="x unified",
         plot_bgcolor="#0F172A",
         paper_bgcolor="#0F172A",
         font=dict(color="#CBD5E1"),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.03,
-            xanchor="right",
-            x=1
-        ),
+        legend=dict(orientation="h", yanchor="bottom", y=1.03, xanchor="right", x=1),
         margin=dict(l=25, r=25, t=85, b=35)
     )
 
-    fig.update_xaxes(
-        showgrid=True,
-        gridcolor="rgba(148, 163, 184, 0.14)",
-        zeroline=False
-    )
-
-    fig.update_yaxes(
-        showgrid=True,
-        gridcolor="rgba(148, 163, 184, 0.14)",
-        zeroline=False
-    )
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.14)", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(148, 163, 184, 0.14)", zeroline=False)
 
     fig.update_yaxes(title_text="价格/净值", row=1, col=1)
     fig.update_yaxes(title_text="成交额/亿", row=2, col=1)
@@ -753,11 +719,9 @@ def build_market_table(spot_df, watch_codes):
     if watch_codes:
         df = df[df["代码"].isin([str(x) for x in watch_codes])]
 
-    if "涨跌幅" in df.columns:
-        df["涨跌幅"] = pd.to_numeric(df["涨跌幅"], errors="coerce")
-
-    if "成交额" in df.columns:
-        df["成交额"] = pd.to_numeric(df["成交额"], errors="coerce")
+    for col in ["涨跌幅", "成交额", "最新价", "涨跌额"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
     keep_cols = [c for c in ["代码", "名称", "最新价", "涨跌幅", "涨跌额", "成交额"] if c in df.columns]
     df = df[keep_cols].copy()
@@ -772,10 +736,7 @@ def build_market_table(spot_df, watch_codes):
 # 页面标题
 # =========================
 st.markdown('<div class="main-title">📊 基金 / ETF 专业实时分析看板</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="sub-title">趋势结构 · 5/20/60日均线 · 成交额异动 · 资金行为代理 · 自动策略解读</div>',
-    unsafe_allow_html=True
-)
+st.markdown('<div class="sub-title">趋势结构 · 5/20/60日均线 · 成交额异动 · 资金行为代理 · 自动策略解读</div>', unsafe_allow_html=True)
 
 
 # =========================
@@ -784,36 +745,15 @@ st.markdown(
 with st.sidebar:
     st.header("🎛️ 看板设置")
 
-    selected_name = st.selectbox(
-        "选择关注基金/ETF",
-        list(DEFAULT_ETFS.keys()),
-        index=3
-    )
+    selected_name = st.selectbox("选择关注基金/ETF", list(DEFAULT_ETFS.keys()), index=3)
+    selected_code = st.text_input("基金/ETF代码", value=DEFAULT_ETFS[selected_name])
 
-    selected_code = st.text_input(
-        "基金/ETF代码",
-        value=DEFAULT_ETFS[selected_name]
-    )
-
-    days = st.slider(
-        "历史分析周期",
-        min_value=80,
-        max_value=520,
-        value=240,
-        step=20
-    )
+    days = st.slider("历史分析周期", min_value=80, max_value=520, value=240, step=20)
 
     st.divider()
 
     auto_refresh = st.checkbox("自动刷新", value=False)
-
-    refresh_seconds = st.slider(
-        "刷新间隔/秒",
-        min_value=30,
-        max_value=600,
-        value=120,
-        step=30
-    )
+    refresh_seconds = st.slider("刷新间隔/秒", min_value=30, max_value=600, value=120, step=30)
 
     st.divider()
 
@@ -835,14 +775,14 @@ try:
         spot_df, spot_source, spot_error = get_etf_spot_stable()
         hist, hist_source, hist_error = get_etf_history_stable(selected_code, days=days)
 
-    if spot_source == "缓存数据" or hist_source == "缓存数据":
+    if "缓存" in spot_source or "缓存" in hist_source:
         st.warning("当前部分数据来自最近一次成功缓存，公开行情接口可能暂时不稳定。")
 
-    if spot_source == "数据不可用":
+    if spot_source == "实时行情不可用":
         st.warning(f"实时行情暂时不可用。错误信息：{spot_error}")
 
     if hist.empty:
-        st.error("历史行情数据暂时不可用，且本地没有可用缓存。请稍后刷新，或更换ETF代码。")
+        st.error("历史行情数据暂时不可用。请稍后刷新，或更换 ETF 代码。")
         if hist_error:
             st.caption(f"错误信息：{hist_error}")
         st.stop()
@@ -853,7 +793,6 @@ try:
     latest = hist.iloc[-1]
 
     selected_spot = pd.DataFrame()
-
     if not spot_norm.empty and "代码" in spot_norm.columns:
         spot_norm["代码"] = spot_norm["代码"].astype(str)
         selected_spot = spot_norm[spot_norm["代码"] == str(selected_code)]
@@ -871,7 +810,6 @@ try:
         today_amount = latest.get("成交额", np.nan)
 
     c1, c2, c3, c4, c5 = st.columns(5)
-
     c1.metric("基金/ETF", real_name)
     c2.metric("当前价/净值", f"{safe_num(latest_price):.3f}" if pd.notna(safe_num(latest_price)) else "暂无")
     c3.metric("今日涨跌幅", format_pct(today_pct))
@@ -879,7 +817,6 @@ try:
     c5.metric("资金信号", summary["money_label"])
 
     c6, c7, c8, c9, c10 = st.columns(5)
-
     c6.metric("趋势评分", f"{summary['trend_score']} / 5")
     c7.metric("趋势状态", summary["trend_label"])
     c8.metric("风险状态", summary["risk_label"])
@@ -896,10 +833,7 @@ try:
     tab1, tab2, tab3, tab4 = st.tabs(["📈 专业分析图", "🧠 自动解读", "🔥 实时行情池", "📋 信号明细"])
 
     with tab1:
-        fig = draw_professional_chart(
-            hist,
-            title=f"{real_name}（{selected_code}）专业趋势与资金行为分析"
-        )
+        fig = draw_professional_chart(hist, title=f"{real_name}（{selected_code}）专业趋势与资金行为分析")
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
@@ -933,20 +867,11 @@ try:
 
         with right:
             st.subheader("关键位置")
-
             key_df = pd.DataFrame({
                 "指标": [
-                    "收盘价/净值",
-                    "MA5",
-                    "MA20",
-                    "MA60",
-                    "相对MA5偏离",
-                    "相对MA20偏离",
-                    "相对MA60偏离",
-                    "成交额",
-                    "成交额MA20",
-                    "量能倍率",
-                    "资金行为强度"
+                    "收盘价/净值", "MA5", "MA20", "MA60",
+                    "相对MA5偏离", "相对MA20偏离", "相对MA60偏离",
+                    "成交额", "成交额MA20", "量能倍率", "资金行为强度"
                 ],
                 "数值": [
                     f"{latest['收盘']:.4f}",
@@ -962,12 +887,10 @@ try:
                     f"{latest['资金行为强度']:.2f}" if pd.notna(latest["资金行为强度"]) else "暂无"
                 ]
             })
-
             st.dataframe(key_df, use_container_width=True, hide_index=True)
 
     with tab3:
-        watch_codes = list(DEFAULT_ETFS.values())
-        market_table = build_market_table(spot_df, watch_codes)
+        market_table = build_market_table(spot_df, list(DEFAULT_ETFS.values()))
 
         if market_table.empty:
             st.warning("暂未获取到实时行情表。若公开接口不稳定，请稍后刷新。")
@@ -976,37 +899,21 @@ try:
                 market_table = market_table.sort_values("涨跌幅", ascending=False)
 
             st.subheader("关注ETF实时强弱排名")
-            st.dataframe(
-                market_table,
-                use_container_width=True,
-                height=480,
-                hide_index=True
-            )
+            st.dataframe(market_table, use_container_width=True, height=480, hide_index=True)
 
             if "涨跌幅" in market_table.columns and len(market_table) >= 2:
                 best = market_table.iloc[0]
                 worst = market_table.iloc[-1]
-
-                best_pct = safe_num(best.get("涨跌幅", np.nan))
-                worst_pct = safe_num(worst.get("涨跌幅", np.nan))
-
                 st.info(
-                    f"当前关注池中，最强为 **{best.get('名称', '')}**，涨跌幅 {best_pct:.2f}%；"
-                    f"最弱为 **{worst.get('名称', '')}**，涨跌幅 {worst_pct:.2f}%。"
+                    f"当前关注池中，最强为 **{best.get('名称', '')}**，涨跌幅 {safe_num(best.get('涨跌幅', np.nan)):.2f}%；"
+                    f"最弱为 **{worst.get('名称', '')}**，涨跌幅 {safe_num(worst.get('涨跌幅', np.nan)):.2f}%。"
                 )
 
     with tab4:
         signal_df = hist[[
-            "日期",
-            "收盘",
-            "日涨跌幅",
-            "成交额",
-            "量能倍率",
-            "资金行为强度",
-            "资金信号",
-            "均线偏离_MA5",
-            "均线偏离_MA20",
-            "均线偏离_MA60"
+            "日期", "收盘", "日涨跌幅", "成交额", "量能倍率",
+            "资金行为强度", "资金信号",
+            "均线偏离_MA5", "均线偏离_MA20", "均线偏离_MA60"
         ]].copy()
 
         signal_df["日期"] = pd.to_datetime(signal_df["日期"]).dt.strftime("%Y-%m-%d")
@@ -1019,12 +926,7 @@ try:
         signal_df["均线偏离_MA60"] = signal_df["均线偏离_MA60"].map(format_pct)
 
         st.subheader("历史资金行为信号明细")
-        st.dataframe(
-            signal_df.sort_values("日期", ascending=False),
-            use_container_width=True,
-            height=520,
-            hide_index=True
-        )
+        st.dataframe(signal_df.sort_values("日期", ascending=False), use_container_width=True, height=520, hide_index=True)
 
 except Exception as e:
     st.error("看板运行失败，但这不是安装包问题，而是网页后台运行异常。")
