@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FundPilot Pro | 基金一路长红
+FundPilot Pro | 基金
 
 运行方式:
     streamlit run fundpilot_pro.py
@@ -31,6 +31,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from plotly.subplots import make_subplots
 
 
@@ -38,13 +39,13 @@ APP_NAME = "FundPilot Pro"
 APP_SUBTITLE = "实仓导入 · 模块轮动 · 趋势风控 · AI专业解读 · 自定义基金搜索"
 
 THEME = {
-    "bg": "#050816",
-    "bg2": "#071126",
-    "panel": "#0B1020",
-    "panel2": "#111827",
+    "bg": "#07111F",
+    "bg2": "#0B1A2F",
+    "panel": "#101B2D",
+    "panel2": "#16243A",
     "border": "rgba(88, 213, 255, 0.26)",
-    "text": "#F8FAFC",
-    "muted": "#A8B7CF",
+    "text": "#F8FBFF",
+    "muted": "#D6E2F3",
     "blue": "#58D5FF",
     "green": "#22C55E",
     "red": "#EF4444",
@@ -53,6 +54,21 @@ THEME = {
 }
 
 PLOTLY_TEMPLATE = "plotly_dark"
+CHART_CONFIG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "scrollZoom": True,
+    "responsive": True,
+    "toImageButtonOptions": {
+        "format": "png",
+        "filename": "fundpilot_chart",
+        "height": 1080,
+        "width": 1920,
+        "scale": 2,
+    },
+}
+DATA_MODE_OPTIONS = ["东方财富实时行情 + 日线兜底", "东方财富日线 + 演示兜底", "仅演示行情"]
+REFRESH_OPTIONS = ["实时 15秒", "30秒", "1分钟", "5分钟", "15分钟", "30分钟", "60分钟", "手动刷新"]
 
 
 MODULE_TAXONOMY: Dict[str, List[str]] = {
@@ -270,13 +286,15 @@ def inject_css() -> None:
         """
         <style>
         :root {
-            --bg: #050816;
-            --bg2: #071126;
-            --panel: #0B1020;
-            --panel2: #111827;
-            --border: rgba(88, 213, 255, 0.26);
-            --text: #F8FAFC;
-            --muted: #A8B7CF;
+            --bg: #07111F;
+            --bg2: #0B1A2F;
+            --panel: #101B2D;
+            --panel2: #16243A;
+            --panel3: #1B2B44;
+            --border: rgba(124, 214, 255, 0.40);
+            --text: #F8FBFF;
+            --muted: #D6E2F3;
+            --muted2: #9FB4D0;
             --blue: #58D5FF;
             --green: #22C55E;
             --red: #EF4444;
@@ -285,17 +303,25 @@ def inject_css() -> None:
         }
         .stApp {
             background:
-                radial-gradient(circle at 12% 0%, rgba(88, 213, 255, 0.08), transparent 30%),
-                linear-gradient(135deg, #050816 0%, #071126 50%, #0B1020 100%);
+                radial-gradient(circle at 12% 0%, rgba(88, 213, 255, 0.12), transparent 30%),
+                linear-gradient(135deg, #07111F 0%, #0B1A2F 48%, #101B2D 100%);
             color: var(--text);
+        }
+        .stApp, .stApp p, .stApp li, .stApp label,
+        .stApp span:not([class*="plotly"]):not([class*="modebar"]) {
+            color: var(--text);
+        }
+        .stCaptionContainer, .stCaptionContainer p,
+        [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {
+            color: var(--muted2) !important;
         }
         [data-testid="stSidebar"] {
             background:
-                linear-gradient(180deg, rgba(7, 17, 38, .98), rgba(5, 8, 22, .98));
-            border-right: 1px solid rgba(88, 213, 255, 0.18);
+                linear-gradient(180deg, rgba(12, 28, 50, .98), rgba(7, 17, 31, .98));
+            border-right: 1px solid rgba(124, 214, 255, 0.28);
         }
         [data-testid="stSidebar"] * {
-            color: var(--text);
+            color: var(--text) !important;
         }
         [data-testid="stMetricValue"] {
             color: var(--text);
@@ -312,13 +338,13 @@ def inject_css() -> None:
             letter-spacing: 0;
         }
         .hero {
-            border: 1px solid rgba(88, 213, 255, 0.28);
+            border: 1px solid rgba(124, 214, 255, 0.42);
             background:
-                linear-gradient(120deg, rgba(11, 16, 32, 0.94), rgba(7, 17, 38, 0.9)),
-                linear-gradient(90deg, rgba(88, 213, 255, 0.14), rgba(167, 139, 250, 0.12));
+                linear-gradient(120deg, rgba(18, 35, 57, 0.98), rgba(11, 26, 47, 0.95)),
+                linear-gradient(90deg, rgba(88, 213, 255, 0.18), rgba(167, 139, 250, 0.14));
             border-radius: 8px;
             padding: 18px 20px;
-            box-shadow: 0 0 28px rgba(88, 213, 255, 0.09);
+            box-shadow: 0 0 28px rgba(88, 213, 255, 0.13);
             margin-bottom: 14px;
         }
         .hero h1 {
@@ -332,11 +358,11 @@ def inject_css() -> None:
             font-size: .95rem;
         }
         .metric-card, .panel, .signal-card, .result-card {
-            border: 1px solid rgba(88, 213, 255, 0.22);
+            border: 1px solid rgba(124, 214, 255, 0.34);
             background:
-                linear-gradient(180deg, rgba(17, 24, 39, 0.92), rgba(11, 16, 32, 0.96));
+                linear-gradient(180deg, rgba(24, 39, 62, 0.96), rgba(14, 27, 46, 0.98));
             border-radius: 8px;
-            box-shadow: 0 0 22px rgba(88, 213, 255, 0.07);
+            box-shadow: 0 0 22px rgba(88, 213, 255, 0.10);
         }
         .metric-card {
             min-height: 118px;
@@ -345,6 +371,7 @@ def inject_css() -> None:
         .metric-label {
             color: var(--muted);
             font-size: .82rem;
+            font-weight: 650;
             margin-bottom: 8px;
         }
         .metric-value {
@@ -359,6 +386,7 @@ def inject_css() -> None:
         .metric-delta {
             margin-top: 8px;
             font-size: .82rem;
+            font-weight: 650;
         }
         .panel {
             padding: 15px;
@@ -371,38 +399,39 @@ def inject_css() -> None:
             gap: 12px;
             margin-bottom: 10px;
             color: var(--text);
-            font-weight: 650;
+            font-weight: 750;
         }
         .panel-subtitle {
             color: var(--muted);
             font-size: .82rem;
-            font-weight: 400;
+            font-weight: 500;
         }
         .pill {
             display: inline-flex;
             align-items: center;
             padding: 3px 8px;
             border-radius: 999px;
-            border: 1px solid rgba(88, 213, 255, 0.28);
-            color: var(--blue);
-            background: rgba(88, 213, 255, 0.08);
+            border: 1px solid rgba(124, 214, 255, 0.46);
+            color: #DDF7FF !important;
+            background: rgba(88, 213, 255, 0.16);
             font-size: .74rem;
+            font-weight: 750;
             margin: 0 5px 5px 0;
         }
         .risk-high {
-            color: #FCA5A5;
-            border-color: rgba(239, 68, 68, 0.36);
-            background: rgba(239, 68, 68, 0.10);
+            color: #FFE0E0 !important;
+            border-color: rgba(248, 113, 113, 0.62);
+            background: rgba(239, 68, 68, 0.18);
         }
         .risk-mid {
-            color: #FDE68A;
-            border-color: rgba(251, 191, 36, 0.36);
-            background: rgba(251, 191, 36, 0.10);
+            color: #FFF1B8 !important;
+            border-color: rgba(251, 191, 36, 0.62);
+            background: rgba(251, 191, 36, 0.16);
         }
         .risk-low {
-            color: #86EFAC;
-            border-color: rgba(34, 197, 94, 0.36);
-            background: rgba(34, 197, 94, 0.10);
+            color: #C8FAD7 !important;
+            border-color: rgba(34, 197, 94, 0.58);
+            background: rgba(34, 197, 94, 0.16);
         }
         .signal-card, .result-card {
             padding: 12px;
@@ -412,12 +441,12 @@ def inject_css() -> None:
             color: var(--text);
         }
         .small-muted {
-            color: var(--muted);
+            color: var(--muted) !important;
             font-size: .82rem;
         }
         .terminal-line {
             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-            color: #C7D2FE;
+            color: #E5EDFF;
             font-size: .82rem;
         }
         .dataframe {
@@ -429,21 +458,87 @@ def inject_css() -> None:
         }
         .stButton button, .stDownloadButton button {
             border-radius: 8px;
-            border: 1px solid rgba(88, 213, 255, 0.36);
-            background: rgba(88, 213, 255, 0.10);
-            color: var(--text);
+            border: 1px solid rgba(124, 214, 255, 0.48);
+            background: linear-gradient(180deg, rgba(88, 213, 255, 0.18), rgba(31, 91, 129, 0.25));
+            color: var(--text) !important;
+            font-weight: 750;
         }
         .stButton button:hover, .stDownloadButton button:hover {
             border-color: rgba(88, 213, 255, 0.8);
-            background: rgba(88, 213, 255, 0.18);
-            color: white;
+            background: rgba(88, 213, 255, 0.28);
+            color: white !important;
+        }
+        .stButton button:disabled, .stDownloadButton button:disabled {
+            opacity: 1 !important;
+            color: #9FB4D0 !important;
+            background: rgba(20, 35, 58, 0.72) !important;
+            border-color: rgba(124, 214, 255, 0.18) !important;
         }
         div[data-baseweb="select"] > div,
         div[data-baseweb="input"] > div,
         textarea {
             border-radius: 8px !important;
-            border-color: rgba(88, 213, 255, 0.24) !important;
-            background-color: rgba(11, 16, 32, 0.88) !important;
+            border-color: rgba(124, 214, 255, 0.46) !important;
+            background-color: rgba(22, 36, 58, 0.96) !important;
+            color: var(--text) !important;
+        }
+        input, textarea,
+        div[data-baseweb="select"] span,
+        div[data-baseweb="select"] div {
+            color: var(--text) !important;
+            -webkit-text-fill-color: var(--text) !important;
+        }
+        input::placeholder, textarea::placeholder {
+            color: #B8C8DD !important;
+            opacity: 1 !important;
+            -webkit-text-fill-color: #B8C8DD !important;
+        }
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stWidgetLabel"] label,
+        [data-testid="stRadio"] label,
+        [data-testid="stSelectbox"] label,
+        [data-testid="stTextInput"] label {
+            color: #EAF2FF !important;
+            font-weight: 720 !important;
+        }
+        [data-testid="stExpander"] {
+            border: 1px solid rgba(124, 214, 255, 0.20);
+            background: rgba(16, 27, 45, 0.72);
+            border-radius: 8px;
+        }
+        [data-testid="stAlert"] {
+            background: rgba(24, 39, 62, 0.96);
+            color: var(--text);
+        }
+        .chart-toolbar {
+            display: flex;
+            justify-content: flex-end;
+            margin: -4px 0 8px;
+        }
+        .fullscreen-chart-stage {
+            position: fixed;
+            inset: 18px;
+            z-index: 999999;
+            background: linear-gradient(135deg, #07111F 0%, #0B1A2F 100%);
+            border: 1px solid rgba(124, 214, 255, 0.55);
+            border-radius: 8px;
+            padding: 14px 16px 20px;
+            box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
+            overflow: auto;
+        }
+        .realtime-strip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 12px;
+            align-items: center;
+            color: #EAF2FF;
+            border: 1px solid rgba(124, 214, 255, 0.28);
+            background: rgba(88, 213, 255, 0.09);
+            padding: 8px 10px;
+            border-radius: 8px;
+            margin: 0 0 12px;
+            font-size: .84rem;
+            font-weight: 650;
         }
         @media (max-width: 820px) {
             .metric-card {
@@ -467,13 +562,51 @@ def init_state() -> None:
             columns=["module_id", "module_name", "fund_code", "fund_name", "created_at"]
         ),
         "selected_fund": "515030",
-        "data_mode": "东方财富优先 + 演示兜底",
+        "data_mode": "东方财富实时行情 + 日线兜底",
         "refresh_frequency": "手动刷新",
         "last_refresh_ts": time.time(),
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+    if st.session_state.get("data_mode") == "东方财富优先 + 演示兜底":
+        st.session_state["data_mode"] = "东方财富实时行情 + 日线兜底"
+    if st.session_state.get("data_mode") not in DATA_MODE_OPTIONS:
+        st.session_state["data_mode"] = "东方财富实时行情 + 日线兜底"
+    if st.session_state.get("refresh_frequency") not in REFRESH_OPTIONS:
+        st.session_state["refresh_frequency"] = "手动刷新"
+
+
+def refresh_interval_seconds(value: str) -> Optional[int]:
+    mapping = {
+        "实时 15秒": 15,
+        "30秒": 30,
+        "1分钟": 60,
+        "5分钟": 5 * 60,
+        "15分钟": 15 * 60,
+        "30分钟": 30 * 60,
+        "60分钟": 60 * 60,
+        "手动刷新": None,
+    }
+    return mapping.get(value)
+
+
+def schedule_auto_refresh() -> None:
+    seconds = refresh_interval_seconds(st.session_state.get("refresh_frequency", "手动刷新"))
+    if not seconds:
+        return
+    components.html(
+        f"""
+        <script>
+        const delay = {seconds * 1000};
+        window.setTimeout(() => {{
+            window.parent.location.reload();
+        }}, delay);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 def fmt_money(value: float, digits: int = 2) -> str:
@@ -513,11 +646,44 @@ def section_title(title: str, subtitle: str = "") -> None:
     )
 
 
+def render_plotly_chart(fig: go.Figure, key: str, fullscreen_height: int = 900) -> None:
+    full_key = f"{key}_fullscreen"
+    is_full = bool(st.session_state.get(full_key, False))
+    toolbar_cols = st.columns([1, 0.18])
+    with toolbar_cols[1]:
+        label = "退出全屏" if is_full else "全屏放大"
+        if st.button(label, key=f"{key}_fullscreen_button", use_container_width=True):
+            st.session_state[full_key] = not is_full
+            rerun_app()
+    chart_fig = go.Figure(fig)
+    chart_fig.update_layout(
+        font=dict(color="#EAF2FF", size=12),
+        title_font=dict(color="#F8FBFF", size=16),
+        legend=dict(font=dict(color="#EAF2FF")),
+    )
+    chart_fig.update_xaxes(tickfont=dict(color="#D6E2F3"), title_font=dict(color="#EAF2FF"), linecolor="rgba(214,226,243,.28)")
+    chart_fig.update_yaxes(tickfont=dict(color="#D6E2F3"), title_font=dict(color="#EAF2FF"), linecolor="rgba(214,226,243,.28)")
+    if st.session_state.get(full_key, False):
+        st.markdown('<div class="fullscreen-chart-stage">', unsafe_allow_html=True)
+        top_cols = st.columns([1, 0.12])
+        with top_cols[0]:
+            st.markdown("### 全屏图表")
+        with top_cols[1]:
+            if st.button("关闭", key=f"{key}_fullscreen_close", use_container_width=True):
+                st.session_state[full_key] = False
+                rerun_app()
+        chart_fig.update_layout(height=fullscreen_height)
+        st.plotly_chart(chart_fig, use_container_width=True, config=CHART_CONFIG)
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.plotly_chart(chart_fig, use_container_width=True, config=CHART_CONFIG)
+
+
 def render_hero() -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>{APP_NAME}｜基金盘</h1>
+            <h1>{APP_NAME}｜基金</h1>
             <p>{APP_SUBTITLE}</p>
         </div>
         """,
@@ -744,6 +910,125 @@ def fetch_fund_nav(code: str, days: int = 420) -> pd.DataFrame:
     return df.dropna(subset=["date", "close"]).tail(days).reset_index(drop=True)
 
 
+@st.cache_data(ttl=15, show_spinner=False)
+def fetch_realtime_quote(code: str) -> Dict[str, Any]:
+    code = normalize_code(code)
+    if infer_market(code) not in {"SH", "SZ"}:
+        raise ValueError("realtime quote only supports exchange traded funds")
+    url = "https://push2.eastmoney.com/api/qt/stock/get"
+    params = {
+        "secid": secid_for_code(code),
+        "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f86,f124,f168,f169,f170,f171",
+        "_": int(time.time() * 1000),
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://quote.eastmoney.com/",
+    }
+    resp = requests.get(url, params=params, headers=headers, timeout=6)
+    resp.raise_for_status()
+    data = resp.json().get("data") or {}
+    if not data or safe_float(data.get("f43")) <= 0:
+        raise ValueError("empty realtime quote")
+    return data
+
+
+def normalize_quote_price(value: Any, reference: float = np.nan) -> float:
+    raw = safe_float(value, np.nan)
+    if pd.isna(raw) or raw <= 0:
+        return np.nan
+    candidates = [raw, raw / 10, raw / 100, raw / 1000, raw / 10000]
+    if pd.notna(reference) and reference > 0:
+        return min(candidates, key=lambda item: abs(math.log(max(item, 1e-9) / reference)))
+    reasonable = [item for item in candidates if 0.05 <= item <= 100]
+    return reasonable[0] if reasonable else raw
+
+
+def normalize_quote_pct(value: Any, price: float, prev_close: float) -> float:
+    raw = safe_float(value, np.nan)
+    if pd.notna(raw):
+        if abs(raw) > 100:
+            return raw / 100
+        if abs(raw) > 30:
+            return raw / 10
+        return raw
+    if pd.notna(price) and pd.notna(prev_close) and prev_close > 0:
+        return (price / prev_close - 1) * 100
+    return np.nan
+
+
+def parse_quote_time(data: Dict[str, Any]) -> pd.Timestamp:
+    for key in ["f124", "f86"]:
+        raw = data.get(key)
+        if raw in (None, "", "-"):
+            continue
+        text = str(raw).strip()
+        try:
+            numeric = int(float(text))
+        except Exception:
+            continue
+        if numeric > 10_000_000_000:
+            parsed = pd.to_datetime(str(numeric), format="%Y%m%d%H%M%S", errors="coerce")
+            if pd.notna(parsed):
+                return pd.Timestamp(parsed)
+        if numeric > 1_000_000_000:
+            return pd.Timestamp(datetime.fromtimestamp(numeric))
+    return pd.Timestamp.now()
+
+
+def apply_realtime_quote(df: pd.DataFrame, code: str, data_mode: str = "") -> pd.DataFrame:
+    if "实时" not in data_mode or "仅演示" in data_mode:
+        return df
+    try:
+        quote = fetch_realtime_quote(code)
+    except Exception:
+        return df
+    out = df.copy().sort_values("date").reset_index(drop=True)
+    if out.empty:
+        return out
+    ref_close = safe_float(out.iloc[-1].get("close"), np.nan)
+    prev_close = normalize_quote_price(quote.get("f60"), ref_close)
+    if pd.isna(prev_close):
+        prev_close = ref_close
+    price = normalize_quote_price(quote.get("f43"), prev_close)
+    if pd.isna(price) or price <= 0:
+        return out
+    open_price = normalize_quote_price(quote.get("f46"), prev_close)
+    high_price = normalize_quote_price(quote.get("f44"), price)
+    low_price = normalize_quote_price(quote.get("f45"), price)
+    pct_change = normalize_quote_pct(quote.get("f170"), price, prev_close)
+    amount = safe_float(quote.get("f48"), safe_float(out.iloc[-1].get("amount"), 0))
+    volume = safe_float(quote.get("f47"), np.nan)
+    if pd.isna(volume) or volume <= 0:
+        volume = amount / price if price > 0 else 0
+    quote_time = parse_quote_time(quote)
+    source = f"东方财富实时行情 · {quote_time.strftime('%Y-%m-%d %H:%M:%S')}"
+    realtime_row = {
+        "date": quote_time,
+        "open": open_price if pd.notna(open_price) else prev_close,
+        "close": price,
+        "high": max([v for v in [high_price, price, open_price] if pd.notna(v)]),
+        "low": min([v for v in [low_price, price, open_price] if pd.notna(v)]),
+        "volume": volume,
+        "amount": amount,
+        "amplitude": ((high_price - low_price) / prev_close * 100) if pd.notna(high_price) and pd.notna(low_price) and prev_close > 0 else np.nan,
+        "pct_change": pct_change,
+        "change": price - prev_close if pd.notna(prev_close) else np.nan,
+        "turnover": safe_float(quote.get("f168"), np.nan),
+        "source": source,
+    }
+    if "fund_name_remote" in out.columns:
+        realtime_row["fund_name_remote"] = str(quote.get("f58") or out.iloc[-1].get("fund_name_remote", ""))
+    quote_day = quote_time.normalize()
+    last_day = pd.Timestamp(out.iloc[-1]["date"]).normalize()
+    if last_day == quote_day:
+        for key, value in realtime_row.items():
+            out.at[out.index[-1], key] = value
+    else:
+        out = pd.concat([out, pd.DataFrame([realtime_row])], ignore_index=True)
+    return out.sort_values("date").reset_index(drop=True)
+
+
 def synthetic_amount_series(code: str, n: int, pct_change: np.ndarray) -> np.ndarray:
     seed = int(normalize_code(code) or "1") % (2**32 - 1)
     rng = np.random.default_rng(seed)
@@ -919,10 +1204,11 @@ def action_label(row: pd.Series) -> str:
     return "趋势破位谨慎" if trend <= 1 else "继续观察"
 
 
-@st.cache_data(ttl=10 * 60, show_spinner=False)
+@st.cache_data(ttl=15, show_spinner=False)
 def analyze_fund_cached(code: str, data_mode: str = "") -> Tuple[pd.DataFrame, Dict[str, Any]]:
     code = normalize_code(code)
     raw = load_price_history(code, 420, data_mode)
+    raw = apply_realtime_quote(raw, code, data_mode)
     enriched = enrich_indicators(raw)
     latest = enriched.iloc[-1].to_dict()
     return enriched, latest
@@ -1209,15 +1495,15 @@ def make_price_chart(df: pd.DataFrame, title: str) -> go.Figure:
         title=title,
         height=660,
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(5,8,22,0.86)",
+        plot_bgcolor="rgba(12,26,46,0.94)",
         margin=dict(l=20, r=20, t=48, b=20),
         legend=dict(orientation="h", y=1.04, x=0, font=dict(size=11)),
         hovermode="x unified",
     )
-    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", row=1, col=1)
-    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", row=2, col=1, tickformat=".2s")
-    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", row=3, col=1, range=[-100, 100])
-    fig.update_xaxes(gridcolor="rgba(168,183,207,.08)")
+    fig.update_yaxes(gridcolor="rgba(214,226,243,.16)", row=1, col=1)
+    fig.update_yaxes(gridcolor="rgba(214,226,243,.16)", row=2, col=1, tickformat=".2s")
+    fig.update_yaxes(gridcolor="rgba(214,226,243,.16)", row=3, col=1, range=[-100, 100])
+    fig.update_xaxes(gridcolor="rgba(214,226,243,.12)")
     return fig
 
 
@@ -1240,11 +1526,11 @@ def make_portfolio_curve_chart(curve: pd.DataFrame) -> go.Figure:
         height=360,
         margin=dict(l=18, r=18, t=28, b=18),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(5,8,22,0.72)",
+        plot_bgcolor="rgba(12,26,46,0.92)",
         legend=dict(orientation="h"),
     )
-    fig.update_yaxes(gridcolor="rgba(168,183,207,.10)", tickformat=".2s")
-    fig.update_xaxes(gridcolor="rgba(168,183,207,.08)")
+    fig.update_yaxes(gridcolor="rgba(214,226,243,.16)", tickformat=".2s")
+    fig.update_xaxes(gridcolor="rgba(214,226,243,.12)")
     return fig
 
 
@@ -1280,7 +1566,7 @@ def make_module_heatmap(pool_df: pd.DataFrame) -> go.Figure:
         height=360,
         margin=dict(l=18, r=18, t=28, b=18),
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(5,8,22,0.72)",
+        plot_bgcolor="rgba(12,26,46,0.92)",
     )
     return fig
 
@@ -1328,9 +1614,9 @@ def make_module_radar(pos_df: pd.DataFrame) -> go.Figure:
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=20, r=20, t=30, b=20),
         polar=dict(
-            bgcolor="rgba(5,8,22,0.65)",
-            radialaxis=dict(range=[0, 100], showticklabels=False, gridcolor="rgba(168,183,207,.14)"),
-            angularaxis=dict(gridcolor="rgba(168,183,207,.14)"),
+            bgcolor="rgba(12,26,46,0.82)",
+            radialaxis=dict(range=[0, 100], showticklabels=False, gridcolor="rgba(214,226,243,.18)"),
+            angularaxis=dict(gridcolor="rgba(214,226,243,.18)"),
         ),
         showlegend=False,
     )
@@ -1349,10 +1635,10 @@ def make_structure_charts(pos_df: pd.DataFrame) -> Tuple[go.Figure, go.Figure, g
     pie.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)")
     sub = pos_df.groupby("细分", as_index=False)["持仓金额"].sum().sort_values("持仓金额", ascending=True).tail(12)
     bar = px.bar(sub, x="持仓金额", y="细分", orientation="h", template=PLOTLY_TEMPLATE, color="持仓金额", color_continuous_scale="Blues")
-    bar.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(5,8,22,0.72)", showlegend=False)
+    bar.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(12,26,46,0.92)", showlegend=False)
     risk_df = pos_df.groupby("风险状态", as_index=False)["持仓金额"].sum()
     risk = px.bar(risk_df, x="风险状态", y="持仓金额", template=PLOTLY_TEMPLATE, color="风险状态", color_discrete_map={"短期过热": "#EF4444", "略偏高": "#FBBF24", "正常波动": "#22C55E", "回调区": "#A78BFA", "深度回调": "#EF4444"})
-    risk.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(5,8,22,0.72)", showlegend=False)
+    risk.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(12,26,46,0.92)", showlegend=False)
     return pie, bar, risk
 
 
@@ -1496,15 +1782,22 @@ def render_sidebar(catalog: pd.DataFrame) -> str:
         st.caption("数据源")
         st.selectbox(
             "行情模式",
-            ["东方财富优先 + 演示兜底", "仅演示行情"],
+            DATA_MODE_OPTIONS,
             key="data_mode",
+            label_visibility="collapsed",
+        )
+        st.caption("自动刷新")
+        st.selectbox(
+            "自动刷新",
+            REFRESH_OPTIONS,
+            key="refresh_frequency",
             label_visibility="collapsed",
         )
         if st.button("刷新行情缓存", use_container_width=True):
             st.cache_data.clear()
             st.session_state["last_refresh_ts"] = time.time()
             rerun_app()
-        st.caption(f"最近刷新: {datetime.fromtimestamp(st.session_state['last_refresh_ts']).strftime('%H:%M:%S')}")
+        st.caption(f"页面时间: {datetime.now().strftime('%H:%M:%S')} | 缓存刷新: {datetime.fromtimestamp(st.session_state['last_refresh_ts']).strftime('%H:%M:%S')}")
     return nav
 
 
@@ -1535,12 +1828,12 @@ def page_dashboard(catalog: pd.DataFrame) -> None:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title("实仓收益曲线", "按导入持仓份额与历史净值/价格估算")
         curve = build_portfolio_curve(pos_df, catalog)
-        st.plotly_chart(make_portfolio_curve_chart(curve), use_container_width=True)
+        render_plotly_chart(make_portfolio_curve_chart(curve), "dashboard_portfolio_curve", fullscreen_height=880)
         st.markdown("</div>", unsafe_allow_html=True)
     with right:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title("组合强弱雷达", "趋势 · 资金 · 风险 · 均衡")
-        st.plotly_chart(make_module_radar(pos_df), use_container_width=True)
+        render_plotly_chart(make_module_radar(pos_df), "dashboard_module_radar", fullscreen_height=860)
         st.markdown("</div>", unsafe_allow_html=True)
 
     pool_codes = catalog["fund_code"].drop_duplicates().head(36)
@@ -1549,7 +1842,7 @@ def page_dashboard(catalog: pd.DataFrame) -> None:
     with left2:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title("模块强弱热力图", "数值越高代表趋势结构越强")
-        st.plotly_chart(make_module_heatmap(pool_df), use_container_width=True)
+        render_plotly_chart(make_module_heatmap(pool_df), "dashboard_module_heatmap", fullscreen_height=860)
         st.markdown("</div>", unsafe_allow_html=True)
     with right2:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -1647,6 +1940,20 @@ def page_fund_analysis(catalog: pd.DataFrame) -> None:
     with main:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title(f"{snap.fund_name} · {snap.fund_code}", f"{snap.module_level_1} / {snap.module_level_2} / {snap.source}")
+        latest_dt = pd.to_datetime(hist.iloc[-1]["date"], errors="coerce")
+        latest_text = latest_dt.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(latest_dt) else "待更新"
+        realtime_badge = "实时快照" if "实时行情" in snap.source else "日线/兜底"
+        st.markdown(
+            f"""
+            <div class="realtime-strip">
+                <span>{realtime_badge}</span>
+                <span>最新时间：{latest_text}</span>
+                <span>刷新频率：{st.session_state.get('refresh_frequency', '手动刷新')}</span>
+                <span>数据源：{snap.source}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         k1, k2, k3, k4 = st.columns(4)
         with k1:
             render_metric_card("当前价格/净值", fmt_num(snap.close), fmt_pct(snap.pct_change), "green" if snap.pct_change >= 0 else "red")
@@ -1657,7 +1964,7 @@ def page_fund_analysis(catalog: pd.DataFrame) -> None:
         with k4:
             tone = "red" if snap.risk_label == "短期过热" else "yellow" if snap.risk_label in {"略偏高", "回调区"} else "green"
             render_metric_card("风险状态", snap.risk_label, snap.action_label, tone)
-        st.plotly_chart(make_price_chart(hist.tail(180), f"{snap.fund_name} 三层专业图表"), use_container_width=True)
+        render_plotly_chart(make_price_chart(hist.tail(180), f"{snap.fund_name} 三层专业图表"), "fund_price_chart", fullscreen_height=920)
         st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -1883,17 +2190,17 @@ def page_positions(catalog: pd.DataFrame) -> None:
     with g1:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title("模块仓位")
-        st.plotly_chart(pie, use_container_width=True)
+        render_plotly_chart(pie, "position_module_pie", fullscreen_height=820)
         st.markdown("</div>", unsafe_allow_html=True)
     with g2:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title("行业集中度")
-        st.plotly_chart(bar, use_container_width=True)
+        render_plotly_chart(bar, "position_concentration_bar", fullscreen_height=820)
         st.markdown("</div>", unsafe_allow_html=True)
     with g3:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         section_title("风险分布")
-        st.plotly_chart(risk, use_container_width=True)
+        render_plotly_chart(risk, "position_risk_bar", fullscreen_height=820)
         st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -1915,292 +2222,4 @@ def page_module_market(catalog: pd.DataFrame) -> None:
     with top[3]:
         filter_by = st.selectbox("筛选", ["全部", "只看强流入", "只看短期过热", "只看回调区", "只看趋势评分4分以上", "只看缩量观望"], key="pool_filter")
 
-    subset = catalog[catalog["module_level_1"] == module_l1].copy()
-    if module_l2 != "全部":
-        subset = subset[subset["module_level_2"] == module_l2]
-    pool_df = build_pool_snapshot(catalog, subset["fund_code"], limit=80)
-    if not pool_df.empty:
-        if filter_by == "只看强流入":
-            pool_df = pool_df[pool_df["资金信号"] == "强流入"]
-        elif filter_by == "只看短期过热":
-            pool_df = pool_df[pool_df["风险状态"] == "短期过热"]
-        elif filter_by == "只看回调区":
-            pool_df = pool_df[pool_df["风险状态"].isin(["回调区", "深度回调"])]
-        elif filter_by == "只看趋势评分4分以上":
-            pool_df = pool_df[pool_df["趋势评分"] >= 4]
-        elif filter_by == "只看缩量观望":
-            pool_df = pool_df[pool_df["资金信号"] == "缩量观望"]
-        ascending = sort_by in {"风险状态"}
-        if sort_by in pool_df.columns:
-            pool_df = pool_df.sort_values(sort_by, ascending=ascending)
-
-    left, right = st.columns([1.32, 1])
-    with left:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("模块行情池", f"{module_l1} / {module_l2}")
-        if pool_df.empty:
-            st.info("当前模块暂无基金样本。可以在自定义搜索页添加基金到模块。")
-        else:
-            st.dataframe(
-                pool_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "当前价格": st.column_config.NumberColumn(format="%.4f"),
-                    "今日涨跌幅": st.column_config.NumberColumn(format="%.2f%%"),
-                    "成交额": st.column_config.NumberColumn(format="￥%.2f"),
-                    "量能倍率": st.column_config.NumberColumn(format="%.2fx"),
-                },
-            )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with right:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("强弱热力图")
-        st.plotly_chart(make_module_heatmap(pool_df), use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("资金信号分布")
-        if pool_df.empty:
-            st.caption("暂无数据")
-        else:
-            signal_df = pool_df["资金信号"].value_counts().reset_index()
-            signal_df.columns = ["资金信号", "数量"]
-            fig = px.bar(signal_df, x="资金信号", y="数量", template=PLOTLY_TEMPLATE, color="资金信号")
-            fig.update_layout(height=270, margin=dict(l=10, r=10, t=20, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(5,8,22,0.72)", showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_search_result(row: pd.Series, catalog: pd.DataFrame, index: int) -> None:
-    code = row["fund_code"]
-    try:
-        _, snap = analyze_fund(code, catalog)
-    except Exception:
-        snap = FundSnapshot(
-            fund_code=code,
-            fund_name=row["fund_name"],
-            module_level_1=row.get("module_level_1", "用户自查"),
-            module_level_2=row.get("module_level_2", "未归类"),
-            close=np.nan,
-            pct_change=0,
-            amount=0,
-            volume_ratio=1,
-            trend_score=0,
-            trend_label="待观察",
-            money_signal="中性",
-            risk_label="待观察",
-            action_label="继续观察",
-            ma20_deviation=0,
-            source="待获取",
-        )
-    st.markdown(
-        f"""
-        <div class="result-card">
-            <strong>{snap.fund_name}</strong>
-            <span class="small-muted"> · {snap.fund_code} · {snap.module_level_1}/{snap.module_level_2}</span><br>
-            {badge('涨跌 ' + fmt_pct(snap.pct_change), 'low' if snap.pct_change >= 0 else 'high')}
-            {badge('成交额 ' + fmt_money(snap.amount), 'info')}
-            {badge(snap.trend_label, 'low' if snap.trend_score >= 4 else 'mid' if snap.trend_score == 3 else 'high')}
-            {badge(snap.money_signal, 'low' if '流入' in snap.money_signal else 'high' if '撤出' in snap.money_signal else 'mid')}
-            {badge(snap.risk_label, 'high' if snap.risk_label == '短期过热' else 'mid' if snap.risk_label in {'略偏高', '回调区'} else 'low')}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    b1, b2, b3 = st.columns(3)
-    with b1:
-        if st.button("加入观察池", key=f"watch_{code}_{index}", use_container_width=True):
-            watch = set(st.session_state.get("watchlist", []))
-            watch.add(code)
-            st.session_state["watchlist"] = list(watch)
-            st.success("已加入观察池")
-    with b2:
-        if st.button("加入实仓", key=f"pos_{code}_{index}", use_container_width=True):
-            new_row = pd.DataFrame(
-                [
-                    {
-                        "fund_code": code,
-                        "fund_name": snap.fund_name,
-                        "shares": 0.0,
-                        "cost_price": snap.close if pd.notna(snap.close) else 0.0,
-                        "buy_date": date.today().strftime("%Y-%m-%d"),
-                        "account_type": "待录入",
-                        "notes": "从搜索页添加",
-                    }
-                ]
-            )
-            st.session_state["positions"] = pd.concat([st.session_state["positions"], new_row], ignore_index=True)
-            st.success("已加入实仓草稿")
-    with b3:
-        if st.button("查看详情", key=f"detail_{code}_{index}", use_container_width=True):
-            st.session_state["selected_fund"] = code
-            st.session_state["nav"] = "基金分析"
-            rerun_app()
-
-
-def page_custom_search(catalog: pd.DataFrame) -> None:
-    render_hero()
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    section_title("自定义基金搜索", "支持代码、名称、关键词、模块名称与任意 6 位代码自查")
-    query = st.text_input("搜索", placeholder="515030 / 新能源 / 半导体 / 黄金 / 煤炭 / 恒生")
-    results = search_funds(query, catalog, limit=20) if query else catalog.head(12)
-    st.caption("当系统模块没有该基金时，可直接输入任意 6 位代码，系统会自动判断市场并尝试生成分析图表。")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    left, right = st.columns([1.35, 0.9])
-    with left:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("搜索结果")
-        if results.empty:
-            st.info("暂无匹配结果。")
-        else:
-            for idx, row in results.iterrows():
-                render_search_result(row, catalog, int(idx))
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with right:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("用户自定义模块")
-        module_name = st.text_input("模块名称", placeholder="我的长期持仓 / 准备止盈 / 高波动赛道")
-        fund_code = st.text_input("基金代码", placeholder="6 位代码")
-        fund_name = st.text_input("基金名称", placeholder="可留空自动识别")
-        if st.button("添加到模块", use_container_width=True, disabled=not (module_name and fund_code)):
-            add_custom_module(module_name, fund_code, fund_name)
-            st.success("已添加")
-            rerun_app()
-        custom = st.session_state.get("custom_modules", pd.DataFrame())
-        if custom.empty:
-            st.caption("暂无自定义模块。")
-        else:
-            st.dataframe(custom[["module_name", "fund_code", "fund_name", "created_at"]], use_container_width=True, hide_index=True)
-            if st.button("清空自定义模块", use_container_width=True):
-                st.session_state["custom_modules"] = custom.head(0)
-                rerun_app()
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("观察池")
-        watch = st.session_state.get("watchlist", [])
-        if not watch:
-            st.caption("暂无观察基金。")
-        else:
-            rows = []
-            for code in watch:
-                try:
-                    rows.append(snapshot_row(code, catalog))
-                except Exception:
-                    continue
-            if rows:
-                watch_df = pd.DataFrame(rows)
-                st.dataframe(
-                    watch_df[["基金名称", "基金代码", "今日涨跌幅", "趋势评分", "资金信号", "风险状态"]],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={"今日涨跌幅": st.column_config.NumberColumn(format="%.2f%%")},
-                )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-def page_settings(catalog: pd.DataFrame) -> None:
-    render_hero()
-    left, right = st.columns([1, 1])
-    with left:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("数据源设置")
-        st.selectbox(
-            "行情模式",
-            ["东方财富优先 + 演示兜底", "仅演示行情"],
-            key="data_mode",
-        )
-        st.selectbox("刷新频率", ["手动刷新", "5分钟", "15分钟", "30分钟", "60分钟"], key="refresh_frequency")
-        st.caption("公开行情接口可能存在延迟或临时不可用，本原型会自动兜底为稳定演示行情。")
-        if st.button("清理缓存并刷新", use_container_width=True):
-            st.cache_data.clear()
-            st.session_state["last_refresh_ts"] = time.time()
-            st.success("缓存已清理")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("基金基础表")
-        st.dataframe(
-            catalog[["fund_code", "fund_name", "module_level_1", "module_level_2", "market", "asset_type", "risk_level"]],
-            use_container_width=True,
-            hide_index=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with right:
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("实仓数据管理")
-        positions = st.session_state.get("positions", pd.DataFrame())
-        if positions.empty:
-            st.caption("暂无实仓数据。")
-        else:
-            csv = standardize_positions(positions).to_csv(index=False).encode("utf-8-sig")
-            st.download_button(
-                "导出实仓 CSV",
-                data=csv,
-                file_name=f"fundpilot_positions_{date.today().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-        pos_df = portfolio_positions(catalog)
-        summary = portfolio_summary(pos_df)
-        diagnosis = "\n".join(generate_portfolio_diagnosis(pos_df, summary))
-        report = io.StringIO()
-        report.write("FundPilot Pro 组合诊断报告\n")
-        report.write(f"生成日期,{date.today().strftime('%Y-%m-%d')}\n")
-        report.write(f"总市值,{summary['total_value']:.2f}\n")
-        report.write(f"总浮盈,{summary['total_pnl']:.2f}\n")
-        report.write(f"收益率,{summary['total_ret']:.2f}%\n")
-        report.write(f"风险等级,{summary['risk_level']}\n")
-        report.write("\n组合诊断\n")
-        report.write(diagnosis)
-        st.download_button(
-            "导出诊断报告",
-            data=report.getvalue().encode("utf-8-sig"),
-            file_name=f"fundpilot_report_{date.today().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown('<div class="panel">', unsafe_allow_html=True)
-        section_title("数据结构")
-        st.markdown(
-            """
-            <div class="terminal-line">fund_base: fund_code, fund_name, module_level_1, module_level_2, market, asset_type, risk_level</div>
-            <div class="terminal-line">market_data: date, fund_code, open, close, high, low, volume, amount, pct_change</div>
-            <div class="terminal-line">indicator: ma5, ma20, ma60, amount_ma20, volume_ratio, obv, money_signal, trend_score, risk_label</div>
-            <div class="terminal-line">position: position_id, fund_code, shares, cost_price, buy_date, account_type, notes</div>
-            <div class="terminal-line">custom_module: module_id, module_name, fund_code, fund_name, created_at</div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-def main() -> None:
-    apply_page_config()
-    inject_css()
-    init_state()
-    catalog = build_catalog()
-    nav = render_sidebar(catalog)
-    if nav == "首页":
-        page_dashboard(catalog)
-    elif nav == "基金分析":
-        page_fund_analysis(catalog)
-    elif nav == "实仓管理":
-        page_positions(catalog)
-    elif nav == "模块行情":
-        page_module_market(catalog)
-    elif nav == "自定义搜索":
-        page_custom_search(catalog)
-    elif nav == "设置中心":
-        page_settings(catalog)
-
-
-if __name__ == "__main__":
-    main()
+    subset = catalog[catalog["module_level_1"] == module_l1
