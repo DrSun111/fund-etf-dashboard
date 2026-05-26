@@ -1,0 +1,28 @@
+{
+  "name": "基金ETF专业分析看板",
+  "short_name": "ETF看板",
+  "description": "专业基金与ETF实时分析看板，支持趋势结构、均线分析、成交额异动与资金行为解读。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0F172A",
+  "background_color": "#0B1020",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
