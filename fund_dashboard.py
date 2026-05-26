@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-FundPilot Pro | 基金
+FundPilot Pro | 基金智能驾驶舱
 
 运行方式:
     streamlit run fundpilot_pro.py
@@ -274,7 +274,7 @@ def rerun_app() -> None:
 
 def apply_page_config() -> None:
     st.set_page_config(
-        page_title="FundPilot Pro | 基金",
+        page_title="FundPilot Pro | 基金智能驾驶舱",
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -683,7 +683,7 @@ def render_hero() -> None:
     st.markdown(
         f"""
         <div class="hero">
-            <h1>{APP_NAME}｜基金</h1>
+            <h1>{APP_NAME}｜基金智能驾驶舱</h1>
             <p>{APP_SUBTITLE}</p>
         </div>
         """,
@@ -1765,7 +1765,7 @@ def generate_alerts(pos_df: pd.DataFrame, catalog: pd.DataFrame) -> Dict[str, Li
 def render_sidebar(catalog: pd.DataFrame) -> str:
     with st.sidebar:
         st.markdown(f"### {APP_NAME}")
-        st.caption("基金")
+        st.caption("基金智能驾驶舱")
         query = st.text_input("全局搜索", placeholder="输入基金代码、名称、模块或关键词")
         if query:
             results = search_funds(query, catalog, limit=5)
