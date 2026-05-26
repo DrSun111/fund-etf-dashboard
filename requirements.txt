@@ -4,4 +4,6 @@ numpy
 plotly
 requests
 openpyxl
-tushare
+lxml
+html5lib
+akshare
